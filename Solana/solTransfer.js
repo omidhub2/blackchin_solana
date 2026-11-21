@@ -508,3 +508,79 @@ export async function sendSol({
     }
   }
 }
+
+/**
+ * Estimate a native SOL transfer without signing or broadcasting it.
+ * Amounts are decimal strings to avoid floating-point precision loss.
+ */
+export async function estimateSolTransfer({
+  fromPublicKey,
+  toPublicKey,
+  amountSol,
+  requestedCommitment = defaultCommitment
+}) {
+  const sender = parsePublicKey(fromPublicKey, 'fromPublicKey');
+  const recipient = parsePublicKey(toPublicKey, 'toPublicKey');
+  const commitmentLevel = validateCommitment(requestedCommitment);
+  const amountLamports = parseSolToLamports(amountSol);
+
+  if (sender.equals(recipient)) {
+    throw new Error('Sending SOL to the same wallet is not allowed');
+  }
+
+  const { pool } = await import('../PostgreSQL/walletStorage.js');
+  const walletResult = await pool.query(
+    'SELECT public_key FROM wallets WHERE public_key = $1 LIMIT 1',
+    [sender.toBase58()]
+  );
+
+  if (walletResult.rowCount === 0) {
+    throw new Error('Sender wallet was not found in the wallet database');
+  }
+
+  const latestBlockhash = await connection.getLatestBlockhash(commitmentLevel);
+  const transaction = new Transaction({
+    feePayer: sender,
+    recentBlockhash: latestBlockhash.blockhash
+  }).add(
+    SystemProgram.transfer({
+      fromPubkey: sender,
+      toPubkey: recipient,
+      lamports: Number(amountLamports)
+    })
+  );
+
+  const feeLamports = await connection.getFeeForMessage(
+    transaction.compileMessage(),
+    commitmentLevel
+  );
+
+  if (!Number.isSafeInteger(feeLamports) || feeLamports < 0) {
+    throw new Error('Unable to obtain a valid transaction fee estimate');
+  }
+
+  const balanceLamports = await connection.getBalance(sender, commitmentLevel);
+
+  if (!Number.isSafeInteger(balanceLamports) || balanceLamports < 0) {
+    throw new Error('RPC returned an invalid sender balance');
+  }
+
+  const totalLamports = amountLamports + BigInt(feeLamports);
+
+  return {
+    network: solanaNetwork,
+    from: sender.toBase58(),
+    to: recipient.toBase58(),
+    amountLamports: amountLamports.toString(),
+    amountSol: formatLamports(amountLamports),
+    estimatedFeeLamports: String(feeLamports),
+    estimatedFeeSol: formatLamports(feeLamports),
+    totalRequiredLamports: totalLamports.toString(),
+    totalRequiredSol: formatLamports(totalLamports),
+    availableLamports: String(balanceLamports),
+    availableSol: formatLamports(balanceLamports),
+    sufficientBalance: BigInt(balanceLamports) >= totalLamports,
+    commitment: commitmentLevel
+  };
+}
+
