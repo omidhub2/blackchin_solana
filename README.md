@@ -5,37 +5,85 @@ A Solana wallet core with encrypted PostgreSQL storage and a Fastify REST API.
 ## Architecture
 
 - `src/core`: framework-independent wallet, balance, receive and transfer use cases.
-- `src/blockchain/solana`: Solana adapter. Core use cases depend on this adapter, not Fastify.
+- `src/blockchain/solana`: Solana adapter.
 - `src/infrastructure/database`: PostgreSQL repositories.
 - `src/api`: Fastify HTTP server, routes and API-key authentication.
-- `PostgreSQL/` and `Solana/`: existing storage and chain implementations retained during this incremental migration.
+- `PostgreSQL/` and `Solana/`: existing storage and chain implementations retained during the incremental migration.
+- `scripts/migrate.js`: versioned PostgreSQL migration runner.
+- `migrations/`: ordered, immutable SQL migrations.
 - `test/`: automated tests.
-- `migrations/`: SQL migrations.
 
-## Requirements
+## Requirements and configuration
 
 - Node.js 20+
-- PostgreSQL with the existing `wallets` table and unique public-key index
+- PostgreSQL
 - Solana RPC endpoint
-- `.env` configured locally
+- Local `.env`
 
-Copy `.env.example` to `.env`, then fill in the real values. Never commit `.env`.
+Copy `.env.example` to `.env` and fill in the real values. Never commit `.env`.
 
-## Install and run
+## Install
 
 ```bash
 npm install
 ```
 
-Apply the idempotency migration to the same database used by `DATABASE_URL`:
+## Database migrations
+
+All schema changes are managed through the migration runner. Do not execute migration files manually after adopting this system.
+
+Check migration status:
 
 ```bash
-psql "$DATABASE_URL" -f migrations/0002_api_idempotency.sql
+npm run db:migrate:status
 ```
 
-Start the API:
+Apply all pending migrations:
 
 ```bash
+npm run db:migrate
+```
+
+The runner:
+
+- Discovers files matching `NNNN_description.sql` in `migrations/`.
+- Applies migrations in numeric version order.
+- Creates `schema_migrations` automatically.
+- Records each migration's version, filename, SHA-256 checksum and applied timestamp.
+- Uses a PostgreSQL advisory lock so two application instances cannot run migrations concurrently.
+- Executes each migration and its history insert in one transaction.
+- Stops if an applied migration is edited, renamed or removed (checksum/history drift).
+- Never performs automatic rollback or destructive schema changes.
+
+### Existing databases
+
+The baseline migration `0001_wallets.sql` creates the encrypted wallets table and indexes if they do not already exist. The existing `0002_api_idempotency.sql` creates the API idempotency table if it does not already exist.
+
+If you previously created these tables manually, running the migration is safe for these two migrations because their DDL uses `IF NOT EXISTS`. The runner will then record them in `schema_migrations`.
+
+**Important:** back up production data before applying schema changes. Review every new migration before running it against production. Never modify a migration that has already been applied; create a new numbered migration instead.
+
+### Adding a migration
+
+Create the next unused version, for example:
+
+`migrations/0003_add_transaction_ledger.sql`
+
+Write forward-only SQL, review it, then run:
+
+```bash
+npm run db:migrate:status
+npm run db:migrate
+```
+
+Do not reuse a version number. Do not edit an applied migration. Do not put secrets in migration files.
+
+## Start the API
+
+Run migrations before starting the API:
+
+```bash
+npm run db:migrate
 npm run api:start
 ```
 
@@ -109,10 +157,20 @@ Content-Type: application/json
 
 ## Tests
 
+Migration runner tests (no database or blockchain transaction required):
+
 ```bash
-npm test
-npm run test:wallet
+npm run test:migrations
+```
+
+Solana transfer unit tests:
+
+```bash
 npm run test:solana
 ```
 
-The wallet-storage test requires a configured PostgreSQL database. The Solana transfer unit tests use deterministic fixtures and do not broadcast transactions.
+Wallet storage integration tests require a configured PostgreSQL database:
+
+```bash
+npm run test:wallet
+```
