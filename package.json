@@ -10,7 +10,10 @@
   "scripts": {
     "wallet:create": "node create-wallet.js",
     "test": "node --test",
-    "test:wallet": "node --test test/wallet-storage.test.js"
+    "test:wallet": "node --test test/wallet-storage.test.js",
+    "sol:receive": "node receive-sol.js",
+    "sol:send": "node send-sol.js",
+    "test:solana": "node --test test/sol-transfer.test.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
