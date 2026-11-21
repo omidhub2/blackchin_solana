@@ -725,3 +725,88 @@ export async function getWalletSolBalance(
     throw error;
   }
 }
+
+// ============================================================
+// Load wallet by exact public key
+// ============================================================
+
+/**
+ * Find a wallet by its exact Solana public key, decrypt its stored
+ * secret key, and verify that the recovered Ed25519 keypair matches.
+ *
+ * The returned privateKey is highly sensitive. Call this function only
+ * from trusted server-side or local administrative code.
+ *
+ * @param {string} publicKey Base58-encoded Solana public key.
+ * @returns {Promise<{
+ *   id: string | number,
+ *   publicKey: string,
+ *   privateKey: string,
+ *   mnemonic: string | null,
+ *   createdAt: Date
+ * } | null>}
+ */
+export async function loadWalletByPublicKey(publicKey) {
+  // Validate Base58 syntax and decoded 32-byte public-key length first.
+  validatePublicKey(publicKey);
+  assertPoolOpen();
+
+  const query = `
+    SELECT
+      id,
+      public_key,
+      private_key_encrypted,
+      private_key_iv,
+      private_key_auth_tag,
+      mnemonic_encrypted,
+      mnemonic_iv,
+      mnemonic_auth_tag,
+      created_at
+    FROM wallets
+    WHERE public_key = $1
+    LIMIT 1;
+  `;
+
+  try {
+    const result = await pool.query(query, [publicKey]);
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    const wallet = result.rows[0];
+
+    const privateKey = decrypt(
+      wallet.private_key_encrypted,
+      wallet.private_key_iv,
+      wallet.private_key_auth_tag
+    );
+
+    const mnemonic = wallet.mnemonic_encrypted === null
+      ? null
+      : decrypt(
+          wallet.mnemonic_encrypted,
+          wallet.mnemonic_iv,
+          wallet.mnemonic_auth_tag
+        );
+
+    // Verify the decrypted 64-byte secret key actually belongs to this row.
+    validateKeypair(wallet.public_key, privateKey);
+
+    return {
+      id: wallet.id,
+      publicKey: wallet.public_key,
+      privateKey,
+      mnemonic,
+      createdAt: wallet.created_at
+    };
+  } catch (error) {
+    console.error('[WALLET LOAD BY PUBLIC KEY ERROR]', {
+      code: error.code ?? 'UNKNOWN',
+      message: error.message
+    });
+
+    throw error;
+  }
+}
+
