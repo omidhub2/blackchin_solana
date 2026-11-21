@@ -14,7 +14,10 @@
     "sol:receive": "node receive-sol.js",
     "sol:send": "node send-sol.js",
     "test:solana": "node --test test/sol-transfer.test.js",
-    "api:start": "node src/index.js"
+    "api:start": "node src/index.js",
+    "db:migrate": "node scripts/migrate.js up",
+    "db:migrate:status": "node scripts/migrate.js status",
+    "test:migrations": "node --test test/migrations.test.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
