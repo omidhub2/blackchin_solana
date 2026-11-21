@@ -3,6 +3,7 @@ import path from 'node:path';
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
+import pg from 'pg';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -287,7 +288,21 @@ async function main() {
     throw new Error('Usage: node scripts/migrate.js [up|status]');
   }
 
-  const { pool } = await import('../PostgreSQL/walletStorage.js');
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is not configured');
+  }
+
+  const { Pool } = pg;
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    connectionTimeoutMillis: 30_000,
+    idleTimeoutMillis: 10_000,
+    keepAlive: true,
+    application_name: 'blackchin-db-migrations'
+  });
 
   try {
     if (command === 'status') {
