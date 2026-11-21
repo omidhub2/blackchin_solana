@@ -4,33 +4,44 @@ import { stdin, stdout } from 'node:process';
 import {
   connectToPostgres,
   disconnectPostgres,
-  loadWallet
+  loadWallet,
+  loadWalletByPublicKey
 } from './walletStorage.js';
 
 // ============================================================
 // Sensitive wallet inspection utility
 // ============================================================
 
-function parseWalletIndex(args) {
-  const indexArg = args.find((arg) => /^--index=/.test(arg));
-
-  if (!indexArg) {
-    return 0;
+function parseTarget(args) {
+  if (args.length === 0) {
+    return { type: 'index', value: 0 };
   }
 
-  const rawValue = indexArg.slice('--index='.length);
-
-  if (!/^\d+$/.test(rawValue)) {
-    throw new Error('Invalid --index value. Use a non-negative integer.');
+  if (args.length > 1) {
+    throw new Error(
+      'Usage: node PostgreSQL/show-wallet.js <PUBLIC_KEY> OR --index=<number>'
+    );
   }
 
-  const index = Number(rawValue);
+  const [argument] = args;
 
-  if (!Number.isSafeInteger(index)) {
-    throw new Error('--index exceeds the JavaScript safe integer range.');
+  if (argument.startsWith('--index=')) {
+    const rawValue = argument.slice('--index='.length);
+
+    if (!/^\d+$/.test(rawValue)) {
+      throw new Error('Invalid --index value. Use a non-negative integer.');
+    }
+
+    const index = Number(rawValue);
+
+    if (!Number.isSafeInteger(index)) {
+      throw new Error('--index exceeds the JavaScript safe integer range.');
+    }
+
+    return { type: 'index', value: index };
   }
 
-  return index;
+  return { type: 'publicKey', value: argument };
 }
 
 async function confirmPrivateKeyReveal() {
@@ -66,17 +77,24 @@ async function main() {
   let exitCode = 0;
 
   try {
-    const index = parseWalletIndex(process.argv.slice(2));
+    const target = parseTarget(process.argv.slice(2));
 
     console.log('Connecting to PostgreSQL...');
     await connectToPostgres();
     connected = true;
 
     console.log('\nLoading wallet from encrypted storage...');
-    const wallet = await loadWallet(index);
+
+    const wallet = target.type === 'publicKey'
+      ? await loadWalletByPublicKey(target.value)
+      : await loadWallet(target.value);
 
     if (!wallet) {
-      console.log(`No wallet found at index ${index}.`);
+      console.log(
+        target.type === 'publicKey'
+          ? 'No wallet found for the supplied public key.'
+          : `No wallet found at index ${target.value}.`
+      );
       return;
     }
 
@@ -84,7 +102,6 @@ async function main() {
     console.log('          SOLANA WALLET');
     console.log('======================================');
     console.log('Wallet ID:', wallet.id);
-    console.log('Wallet index:', index);
     console.log('Public Key:', wallet.publicKey);
     console.log('Created At:', wallet.createdAt);
 
@@ -97,11 +114,8 @@ async function main() {
 
     console.log('\nPRIVATE KEY (HEX) — HANDLE AS A SECRET:');
     console.log(wallet.privateKey);
-    console.log('\nPrivate key was decrypted in memory and displayed locally.');
+    console.log('\nPrivate key was decrypted and validated locally.');
     console.log('Never paste it into chat, websites, issue trackers, or GitHub.');
-
-    // Do not print mnemonic. This utility is intentionally limited to the
-    // public key and private key requested by the operator.
   } catch (error) {
     exitCode = 1;
     console.error('\n[SHOW WALLET ERROR]', error.message);
