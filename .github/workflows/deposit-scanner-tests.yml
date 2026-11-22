@@ -18,5 +18,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install dependencies
+        run: npm ci
       - name: Run deposit scanner tests
         run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js
