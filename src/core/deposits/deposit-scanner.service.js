@@ -280,10 +280,20 @@ export function createDepositScanner({
             if (stopReason) break;
             if (signatures.length < pageSize) break;
             before = signatures.at(-1)?.signature ?? null;
+
+            // Do not move the high-water cursor when the bounded scan window
+            // may have more pages; doing so would skip older unprocessed rows.
+            if (page === pages - 1) {
+              stopReason = 'batch_limit';
+              break;
+            }
           }
 
           if (stopReason) {
-            await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
+            const reason = stopReason === 'transaction_unavailable'
+              ? 'parsed transaction unavailable'
+              : 'scanner maxBatch reached; cursor was not advanced';
+            await cursors.markCursorError(db, cursor.id, reason);
             summary.cursors.push({
               address: wallet.publicKey,
               lastSignature: cursor.lastSignature,
