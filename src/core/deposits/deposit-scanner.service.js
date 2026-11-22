@@ -346,6 +346,14 @@ export function createDepositScanner({
               } else {
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
+                if (recorded.ownershipConflict) {
+                  log('scanner.deposit_ownership_conflict', {
+                    signature: entry.signature,
+                    walletPublicKey: wallet.publicKey,
+                    tenantId: wallet.tenantId ?? null
+                  });
+                  continue;
+                }
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey, wallet.tenantId ?? null);
               }
             }
