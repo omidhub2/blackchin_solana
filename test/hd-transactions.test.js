@@ -94,7 +94,7 @@ function buildWithdrawalHarness() {
   let failIdempotencyWrites = false;
 
   pool.onQuery('INSERT INTO api_idempotency_keys', (params) => {
-    const [key, hash, walletPublicKey] = params;
+    const [key, hash, walletPublicKey, network] = params;
 
     if (idempotency.has(key)) return { rows: [], rowCount: 0 };
 
@@ -104,6 +104,7 @@ function buildWithdrawalHarness() {
       response_json: null,
       wallet_public_key: walletPublicKey,
       operation: 'withdrawal',
+      network,
       transaction_signature: null
     });
 
