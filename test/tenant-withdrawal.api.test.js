@@ -12,6 +12,7 @@ function harness(scopes = ['withdrawals:estimate', 'withdrawals:write']) {
   const calls = [];
   const db = {
     async query(sql) {
+      if (String(sql).includes('INSERT INTO rate_limit_counters')) return { rowCount: 1, rows: [{ hit_count: 1, window_ends_at: new Date(Date.now() + 60_000) }] };
       if (String(sql).startsWith('SELECT')) return {
         rowCount: 1,
         rows: [{
@@ -27,7 +28,9 @@ function harness(scopes = ['withdrawals:estimate', 'withdrawals:write']) {
   };
   const tenantWithdrawals = {
     async estimate(input) { calls.push(['estimate', input]); return { network: 'devnet', sufficientBalance: true }; },
-    async submit(input) { calls.push(['submit', input]); return { sent: true, signature: 'sig', replayed: false }; }
+    async submit(input) { calls.push(['submit', input]); return { sent: true, signature: 'sig', replayed: false }; },
+    async list(input) { calls.push(['list', input]); return { items: [], ...input }; },
+    async get(input) { calls.push(['get', input]); return { status: 'processing', ...input }; }
   };
   return { apiKey, calls, services: { deps: { db }, tenantWithdrawals } };
 }
@@ -69,6 +72,31 @@ test('tenant withdrawal submit requires idempotency key and a partner approval r
   } finally { await app.close(); }
 });
 
+test('tenant withdrawal history is scoped to the authenticated tenant', async () => {
+  const h = harness(['withdrawals:read']);
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/tenant/withdrawals?limit=10&offset=5',
+      headers: { 'x-api-key': h.apiKey }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(h.calls[0], ['list', { tenantId: '42', limit: 10, offset: 5 }]);
+  } finally { await app.close(); }
+});
+
+test('tenant withdrawal detail lookup receives authenticated tenant and idempotency key', async () => {
+  const h = harness(['withdrawals:read']);
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/tenant/withdrawals/tenant-withdrawal-key-001',
+      headers: { 'x-api-key': h.apiKey }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(h.calls[0], ['get', { tenantId: '42', idempotencyKey: 'tenant-withdrawal-key-001' }]);
+  } finally { await app.close(); }
+});
 test('tenant withdrawal routes enforce operation scopes', async () => {
   const h = harness(['withdrawals:estimate']);
   const app = buildServer({ logger: false, services: h.services });
