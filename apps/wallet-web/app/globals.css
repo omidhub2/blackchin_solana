@@ -12,11 +12,12 @@ body {
 }
 
 body {
-  @apply bg-ink-950 text-slate-200 antialiased;
+  @apply text-slate-200 antialiased;
+  background-color: #353545;
   background-image:
-    radial-gradient(circle at 15% -10%, rgba(56, 189, 248, 0.14), transparent 42%),
-    radial-gradient(circle at 85% 0%, rgba(139, 92, 246, 0.12), transparent 38%),
-    linear-gradient(180deg, #050810 0%, #050810 55%, #060a13 100%);
+    radial-gradient(circle at 12% 0%, rgba(116, 110, 160, 0.16), transparent 38%),
+    radial-gradient(circle at 88% 8%, rgba(91, 116, 157, 0.12), transparent 34%),
+    linear-gradient(180deg, #383849 0%, #343444 58%, #303040 100%);
   background-attachment: fixed;
 }
 
@@ -41,18 +42,31 @@ body {
 
 @layer components {
   .panel {
-    @apply rounded-2xl border border-white/[0.08] bg-ink-850/90 shadow-panel backdrop-blur-xl;
-    background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 42%);
-    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    @apply rounded-2xl border border-black/20 backdrop-blur-xl;
+    background-color: rgba(43, 43, 58, 0.96);
+    background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.045), transparent 48%);
+    box-shadow: 0 8px 18px rgba(13, 13, 25, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.045);
   }
 
   .panel-muted {
-    @apply rounded-xl border border-white/[0.07] bg-ink-900/85;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    @apply rounded-xl border border-black/15;
+    background-color: rgba(49, 49, 65, 0.82);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
   }
 
   .panel-hover {
-    @apply transition duration-200 hover:-translate-y-0.5 hover:border-cyan-400/25 hover:bg-ink-800/90;
+    @apply relative transition duration-300 ease-out;
+  }
+
+  .panel-hover:hover {
+    border-color: rgba(165, 158, 220, 0.28);
+    transform: translateY(-2px);
+    box-shadow:
+      0 0 0 1px rgba(176, 166, 230, 0.08),
+      0 10px 24px rgba(13, 13, 25, 0.22),
+      0 0 30px rgba(139, 130, 205, 0.16),
+      0 0 16px rgba(34, 211, 238, 0.055),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .field-label {
