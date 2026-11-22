@@ -293,27 +293,3 @@ export async function listDepositsForTenant(db, tenantId, { limit = 20, offset =
   return result.rows.map(mapBlockchainTransaction);
 }
 
-
-export async function findDepositBySignatureForTenant(db, tenantId, signature) {
-  const tenant = assertTenantId(tenantId);
-  const result = await db.query(
-    `SELECT ${TX_COLUMNS}
-     FROM blockchain_transactions
-     WHERE tenant_id = $1 AND signature = $2 AND direction = 'deposit'
-     LIMIT 1`,
-    [tenant, signature]
-  );
-  return mapBlockchainTransaction(result.rows[0]);
-}
-
-export async function listDepositsBySignatureForTenant(db, tenantId, signature) {
-  const tenant = assertTenantId(tenantId);
-  const result = await db.query(
-    `SELECT ${TX_COLUMNS}
-     FROM blockchain_transactions
-     WHERE tenant_id = $1 AND signature = $2 AND direction = 'deposit'
-     ORDER BY id ASC`,
-    [tenant, signature]
-  );
-  return result.rows.map(mapBlockchainTransaction);
-}
