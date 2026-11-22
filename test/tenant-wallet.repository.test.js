@@ -119,7 +119,7 @@ test('tenant account allocation locks and updates only the tenant-owned HD root'
     async query(sql, values) {
       calls.push({ sql, values });
       if (sql.includes('FOR UPDATE')) return { rows: [row], rowCount: 1 };
-      if (sql.includes('RETURNING id, owner_id')) {
+      if (sql.includes('UPDATE hd_wallets')) {
         return { rows: [{ ...row, next_account_index: values[2] }], rowCount: 1 };
       }
       return { rows: [], rowCount: 1 };
