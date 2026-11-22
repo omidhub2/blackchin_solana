@@ -224,6 +224,9 @@ export function createDepositService({ db, rpc, network, commitment }) {
       if (verifiedTotal !== BigInt(lamports)) {
         throw conflict('Deposit amount does not match the verified transfer total', 'AMOUNT_MISMATCH');
       }
+      if (from !== null && from !== transfers[0].from) {
+        throw conflict('Counterparty does not match the verified transfer details', 'COUNTERPARTY_MISMATCH');
+      }
 
       const wallet = await resolveWallet(db, publicKey);
       if (!wallet) {
@@ -241,7 +244,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
         direction: 'deposit',
         walletPublicKey: publicKey,
         hdWalletId,
-        counterparty: from,
+        counterparty: transfers[0].from,
         amountLamports: String(lamports),
         network,
         commitment: entryCommitment ?? commitment,
