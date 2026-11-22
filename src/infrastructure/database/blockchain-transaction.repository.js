@@ -294,6 +294,20 @@ export async function listDepositsForTenant(db, tenantId, { limit = 20, offset =
 }
 
 
+
+/** Return every deposit record for a signature within one tenant. */
+export async function listDepositsBySignatureForTenant(db, tenantId, signature) {
+  const tenant = assertTenantId(tenantId);
+  const result = await db.query(
+    `SELECT ${TX_COLUMNS}
+     FROM blockchain_transactions
+     WHERE tenant_id = $1 AND signature = $2 AND direction = 'deposit'
+     ORDER BY id ASC`,
+    [tenant, signature]
+  );
+  return result.rows.map(mapBlockchainTransaction);
+}
+
 /** Tenant-only deposit monitoring aggregates. */
 export async function getDepositMonitoringForTenant(db, tenantId) {
   const tenant = assertTenantId(tenantId);
