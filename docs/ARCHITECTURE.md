@@ -70,7 +70,7 @@ Required controls:
 - Test that tenant A cannot enumerate, read, mutate, sign with or replay tenant B resources.
 - Separate platform-admin access from partner access and audit every privileged action.
 
-The current `hd_wallets.owner_id` is not sufficient: current API authentication is one shared `API_ACCESS_KEY`, and tenant authorization is not enforced. Do not deploy this code as a multi-tenant public service before this phase is implemented.
+Migration 0009 now provides a tenant registry, hashed credential records and nullable tenant attribution columns. This is only a schema foundation: current API authentication is still one shared `API_ACCESS_KEY`, tenant credentials are not authenticated by the runtime, and tenant authorization is not enforced. The current `hd_wallets.owner_id` is a legacy placeholder and must not be treated as tenant identity. Do not deploy this code as a multi-tenant public service before this phase is implemented.
 
 ## 4. Wallet and address isolation
 
