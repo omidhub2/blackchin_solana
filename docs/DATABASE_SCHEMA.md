@@ -10,7 +10,7 @@ Migrations are applied with `npm run db:migrate` (see `OPERATIONS.md`).
 | 0004 | `0004_hardening.sql` | recovery-token hash/expiry, scanner cursors, webhook outbox, shared rate limiting, ledger UPDATE trigger |
 | 0005 | `0005_ledger_immutability.sql` | re-installs the ledger UPDATE trigger and adds a DELETE guard |
 | 0006 | `0006_deposit_scanner_backfill.sql` | persistent scanner backfill progress |
-| 0007 | `0007_deposit_reconciliation.sql` | durable reconciliation cursor and append-only verification events |
+| 0007 | `0007_deposit_reconciliation.sql` | durable deposit reconciliation cursor and append-only verification events |\n| 0008 | `0008_withdrawal_reconciliation.sql` | durable withdrawal reconciliation cursor and append-only verification events |
 
 ## `wallets` (legacy, unchanged)
 
@@ -137,3 +137,6 @@ cursor at the last successfully handled transaction.
 `consistent`, `under_review`, `recovered`, and `rpc_error`. Event rows
 record status transitions and minimal verification context; they do not
 represent wallet credits or debits.
+
+
+## Withdrawal reconciliation\n\n`withdrawal_reconciliation_cursors` stores a keyset position per configured\nSolana network. `withdrawal_reconciliation_events` references the originating\n`api_idempotency_keys` row and is append-only at the database layer. It records\nfinalized success/failure, pending, unknown, under-review, safe pre-broadcast\nfailure, and RPC error outcomes. It does not represent a monetary hold or\ncustomer balance movement. The current system has no separate monetary\nreservation ledger.\n
