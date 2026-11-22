@@ -17,7 +17,7 @@ export async function ensureWithdrawalReconciliationCursor(db, network) {
 
 export async function listWithdrawalReconciliationCandidates(db, network, afterId, limit) {
   const result = await db.query(
-    `SELECT id, idempotency_key, wallet_public_key, transaction_signature,
+    `SELECT id, tenant_id, idempotency_key, wallet_public_key, transaction_signature,
             to_public_key, amount_lamports, status, operation, response_json, created_at, updated_at
        FROM api_idempotency_keys
       WHERE operation = 'withdrawal'
@@ -38,14 +38,14 @@ export async function listWithdrawalReconciliationCandidates(db, network, afterI
 }
 
 export async function recordWithdrawalReconciliationEvent(db, {
-  idempotencyKey, network, signature = null, outcome, details = {}
+  tenantId = null, idempotencyKey, network, signature = null, outcome, details = {}
 }) {
   const result = await db.query(
     `INSERT INTO withdrawal_reconciliation_events
-       (idempotency_key, network, signature, outcome, details)
-     VALUES ($1, $2, $3, $4, $5::jsonb)
+       (tenant_id, idempotency_key, network, signature, outcome, details)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING id, checked_at`,
-    [idempotencyKey, network, signature, outcome, JSON.stringify(details)]
+    [tenantId === null ? null : String(tenantId), idempotencyKey, network, signature, outcome, JSON.stringify(details)]
   );
   return { id: String(result.rows[0].id), checkedAt: result.rows[0].checked_at };
 }
