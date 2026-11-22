@@ -146,7 +146,7 @@ export async function tenantWalletRoutes(app) {
       amountSol: requireSolAmount(body.amountSol),
       approved: requireBoolean(body.approved, 'approved')
     });
-    return reply.code(result.replayed ? 200 : 202).send(result);
+    return reply.code(result.replayed ? 200 : 201).send(result);
   });
 
   app.get('/monitoring/deposits', {
