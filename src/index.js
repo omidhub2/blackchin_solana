@@ -113,6 +113,8 @@ try {
     pool,
     scanner: worker,
     workerEnabled: scannerEnabled,
+    reconciliationWorker,
+    reconciliationEnabled,
     network: scannerNetwork,
     scope: scannerScope
   });
