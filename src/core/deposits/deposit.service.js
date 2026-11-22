@@ -13,7 +13,7 @@ import {
   TRANSACTION_STATUSES,
   findTransactionBySignature,
   findTransactionBySignatureForTenant,
-  findDepositBySignatureForTenant,
+  listDepositsBySignatureForTenant,
   listDepositsForTenant,
   insertBlockchainTransaction,
   updateTransactionStatus,
@@ -418,9 +418,9 @@ export function createDepositService({ db, rpc, network, commitment }) {
     },
 
     async getForTenant(tenantId, signature) {
-      const deposit = await findDepositBySignatureForTenant(db, tenantId, signature);
-      if (!deposit) throw notFound('Deposit record was not found', 'DEPOSIT_NOT_FOUND');
-      return deposit;
+      const deposits = await listDepositsBySignatureForTenant(db, tenantId, signature);
+      if (deposits.length === 0) throw notFound('Deposit record was not found', 'DEPOSIT_NOT_FOUND');
+      return deposits;
     },
     /**
      * Advance confirmation for an existing deposit record.
