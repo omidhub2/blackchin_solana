@@ -45,7 +45,7 @@ test('tenant withdrawal policy denial happens before idempotency reservation or 
     rpc: { async estimateTransfer() { return {}; }, async sendSolWithSigner() { throw new Error('must not sign'); } }
   });
   await assert.rejects(() => service.submit({
-    tenantId: '42', credentialId: 'cred-1', idempotencyKey: 'tenant-withdrawal-key-001',
+    tenantId: '42', credentialId: '1', idempotencyKey: 'tenant-withdrawal-key-001',
     fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1',
     approvalReference: 'partner-approval-001'
   }), (error) => error.code === 'WITHDRAWAL_NOT_AUTHORIZED');
@@ -60,7 +60,7 @@ test('tenant withdrawal fails closed when no trusted policy provider is configur
     rpc: { async estimateTransfer() { return {}; }, async sendSolWithSigner() { throw new Error('must not sign'); } }
   });
   await assert.rejects(() => service.submit({
-    tenantId: '42', credentialId: 'cred-1', idempotencyKey: 'tenant-withdrawal-key-001',
+    tenantId: '42', credentialId: '1', idempotencyKey: 'tenant-withdrawal-key-001',
     fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1',
     approvalReference: 'partner-approval-001'
   }), (error) => error.code === 'WITHDRAWAL_POLICY_UNAVAILABLE' && error.statusCode === 503);
@@ -71,7 +71,7 @@ test('tenant withdrawal estimate resolves both child and parent within the authe
   let rpcCalls = 0;
   const service = createTenantWithdrawalService({
     db, network: 'devnet', commitment: 'confirmed', cipher: {},
-    rpc: { async estimateTransfer() { rpcCalls += 1; return { sufficientBalance: true }; } }
+    rpc: { async estimateTransfer() { rpcCalls += 1; return { sufficientBalance: true }; }, async sendSolWithSigner() { throw new Error('must not send'); } }
   });
   const result = await service.estimate({
     tenantId: '42', fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1'
@@ -87,7 +87,7 @@ test('tenant withdrawal estimate does not fall back to a wallet owned by another
   let rpcCalls = 0;
   const service = createTenantWithdrawalService({
     db, network: 'devnet', commitment: 'confirmed', cipher: {},
-    rpc: { async estimateTransfer() { rpcCalls += 1; return {}; } }
+    rpc: { async estimateTransfer() { rpcCalls += 1; return {}; }, async sendSolWithSigner() { throw new Error('must not send'); } }
   });
   await assert.rejects(
     () => service.estimate({ tenantId: '42', fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1' }),
@@ -109,7 +109,7 @@ test('tenant withdrawal refuses inactive parent wallets before any RPC request',
   let rpcCalls = 0;
   const service = createTenantWithdrawalService({
     db, network: 'devnet', commitment: 'confirmed', cipher: {},
-    rpc: { async estimateTransfer() { rpcCalls += 1; return {}; } }
+    rpc: { async estimateTransfer() { rpcCalls += 1; return {}; }, async sendSolWithSigner() { throw new Error('must not send'); } }
   });
   await assert.rejects(
     () => service.estimate({ tenantId: '42', fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1' }),
