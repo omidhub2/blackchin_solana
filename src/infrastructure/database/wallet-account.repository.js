@@ -23,9 +23,7 @@ export const MAX_SCAN_ACCOUNTS = 5_000;
 /**
  * Watch-list for the deposit scanner.
  *
- * Only ACTIVE HD children are watched (a disabled/archived wallet is not
- * expected to receive credited deposits). Legacy standalone wallets are
- * reported separately by `listLegacyWatchAddresses`.
+ * Only ACTIVE HD children whose parent HD wallet is also ACTIVE are watched.
  *
  * @param {object} db
  * @param {string} network Deployment network; rows of another network never
@@ -35,12 +33,15 @@ export const MAX_SCAN_ACCOUNTS = 5_000;
 export async function listActiveWatchedWallets(db, network, { hdWalletId = null, limit = MAX_SCAN_ACCOUNTS } = {}) {
   const result = await db.query(
     `
-      SELECT public_key, hd_wallet_id
-      FROM wallet_accounts
-      WHERE network = $1
-        AND status = 'active'
-        AND ($3::bigint IS NULL OR hd_wallet_id = $3)
-      ORDER BY hd_wallet_id ASC, account_index ASC
+      SELECT account.public_key, account.hd_wallet_id
+      FROM wallet_accounts AS account
+      INNER JOIN hd_wallets AS root
+        ON root.id = account.hd_wallet_id
+       AND root.status = 'active'
+      WHERE account.network = $1
+        AND account.status = 'active'
+        AND ($3::bigint IS NULL OR account.hd_wallet_id = $3)
+      ORDER BY account.hd_wallet_id ASC, account.account_index ASC
       LIMIT $2
     `,
     [network, Math.min(limit, MAX_SCAN_ACCOUNTS), hdWalletId]
@@ -49,6 +50,32 @@ export async function listActiveWatchedWallets(db, network, { hdWalletId = null,
   return result.rows.map((row) => ({
     publicKey: row.public_key,
     hdWalletId: String(row.hd_wallet_id)
+  }));
+}
+
+/**
+ * Legacy standalone wallets have no network or status columns in the original
+ * schema. Their public keys are network-agnostic, so they are watched on the
+ * scanner's configured Solana network. There is currently no persisted
+ * disabled state for these legacy rows.
+ *
+ * @param {object} db
+ * @returns {Promise<Array<{publicKey: string, hdWalletId: null}>>}
+ */
+export async function listStandaloneWatchedWallets(db, { limit = MAX_SCAN_ACCOUNTS } = {}) {
+  const result = await db.query(
+    `
+      SELECT public_key
+      FROM wallets
+      ORDER BY created_at ASC, id ASC
+      LIMIT $1
+    `,
+    [Math.min(limit, MAX_SCAN_ACCOUNTS)]
+  );
+
+  return result.rows.map((row) => ({
+    publicKey: row.public_key,
+    hdWalletId: null
   }));
 }
 
