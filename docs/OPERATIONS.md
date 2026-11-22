@@ -24,7 +24,9 @@ Copy `.env.example` to `.env` and fill it in. Required variables:
 | `ENCRYPTION_KEY_V<n>` | no | key rotation (see `SECURITY.md`) |
 | `API_HOST` / `API_PORT` | no | `127.0.0.1` / `3000` |
 | `DEPOSIT_RECONCILIATION_ENABLED` | no | `false`; set `true` to run periodic deposit chain checks |
-| `DEPOSIT_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |\n| `WITHDRAWAL_RECONCILIATION_ENABLED` | no | `false`; set `true` to reconcile ambiguous withdrawals |\n| `WITHDRAWAL_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |
+| `DEPOSIT_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |
+| `WITHDRAWAL_RECONCILIATION_ENABLED` | no | `false`; set `true` to reconcile ambiguous withdrawals |
+| `WITHDRAWAL_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |
 
 The API refuses to start if `API_ACCESS_KEY` is missing/short or
 `ENCRYPTION_KEY` is not 64 hex characters.
@@ -50,7 +52,8 @@ applied migration; add the next number.
 
 The API also fails fast at startup if the schema is missing (it probes
 `api_idempotency_keys`, `hd_wallets`, `wallet_accounts`,
-`blockchain_transactions`, `deposit_reconciliation_cursors`,\n`withdrawal_reconciliation_cursors`).
+`blockchain_transactions`, `deposit_reconciliation_cursors`,
+`withdrawal_reconciliation_cursors`).
 
 ## 4. Start the API
 
@@ -147,7 +150,33 @@ to perform yet. Never correct balances by editing wallet or transaction rows.
 
 The readiness endpoint includes the reconciliation worker state when enabled.
 
-## 10. Withdrawal reconciliation\n\nMigration `0008_withdrawal_reconciliation.sql` adds a durable keyset cursor and\nappend-only evidence. After applying migrations, enable the worker with:\n\n```dotenv\nWITHDRAWAL_RECONCILIATION_ENABLED=true\nWITHDRAWAL_RECONCILIATION_INTERVAL_MS=60000\n```\n\nThe worker checks processing withdrawal idempotency records against Solana RPC.\nOnly finalized successful transactions with a parsed, single native SOL transfer\nfrom the stored sender are completed and written to `blockchain_transactions`.\nFinalized on-chain failures become failed idempotency records. Confirmed-but-not-\nfinalized, missing, unavailable, or mismatched evidence remains processing or\nunder review; the worker never rebroadcasts a signature. A processing row without\na persisted signature is failed only after five minutes, because the signing flow\npersists the signature before it can call `sendRawTransaction`. A PostgreSQL\nadvisory lock prevents concurrent workers from processing the same network.\n\nThis project does not currently have a separate monetary reservation/hold ledger.\nThe `processing` row is an idempotency guard, not a reserved customer balance.\nTherefore reconciliation does not release or alter wallet funds.\n\nThe readiness endpoint includes this worker when enabled.\n\n## 11. Troubleshooting
+## 10. Withdrawal reconciliation
+
+Migration `0008_withdrawal_reconciliation.sql` adds a durable keyset cursor and
+append-only evidence. After applying migrations, enable the worker with:
+
+```dotenv
+WITHDRAWAL_RECONCILIATION_ENABLED=true
+WITHDRAWAL_RECONCILIATION_INTERVAL_MS=60000
+```
+
+The worker checks processing withdrawal idempotency records against Solana RPC.
+Only finalized successful transactions with a parsed, single native SOL transfer
+from the stored sender are completed and written to `blockchain_transactions`.
+Finalized on-chain failures become failed idempotency records. Confirmed-but-not-
+finalized, missing, unavailable, or mismatched evidence remains processing or
+under review; the worker never rebroadcasts a signature. A processing row without
+a persisted signature is failed only after five minutes, because the signing flow
+persists the signature before it can call `sendRawTransaction`. A PostgreSQL
+advisory lock prevents concurrent workers from processing the same network.
+
+This project does not currently have a separate monetary reservation/hold ledger.
+The `processing` row is an idempotency guard, not a reserved customer balance.
+Therefore reconciliation does not release or alter wallet funds.
+
+The readiness endpoint includes this worker when enabled.
+
+## 11. Troubleshooting
 
 | Symptom | Likely cause / action |
 |---|---|
