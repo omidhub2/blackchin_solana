@@ -53,7 +53,7 @@ function makeServices({ tenantId = '41', scopes } = {}) {
   };
 }
 
-test('tenant wallet API authenticates with tenant key without the legacy global key', async () => {
+test('tenant wallet API authenticates with tenant key without sending the legacy global key', async () => {
   const fake = makeServices();
   const app = buildServer({ logger: false, services: fake.services });
   try {
