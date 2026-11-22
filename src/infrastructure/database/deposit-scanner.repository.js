@@ -17,6 +17,8 @@ const CURSOR_COLUMNS = `
   backfill_anchor_signature,
   backfill_before_signature,
   backfill_high_water_signature,
+  backfill_high_water_slot,
+  backfill_high_water_block_time,
   last_run_at,
   last_error,
   status,
@@ -47,6 +49,8 @@ function mapCursor(row) {
     backfillAnchorSignature: row.backfill_anchor_signature ?? null,
     backfillBeforeSignature: row.backfill_before_signature ?? null,
     backfillHighWaterSignature: row.backfill_high_water_signature ?? null,
+    backfillHighWaterSlot: row.backfill_high_water_slot === null ? null : Number(row.backfill_high_water_slot),
+    backfillHighWaterBlockTime: row.backfill_high_water_block_time ?? null,
     lastRunAt: row.last_run_at,
     lastError: row.last_error,
     status: row.status,
@@ -143,7 +147,9 @@ export async function advanceCursor(db, cursorId, { lastSignature, lastSlot, las
 export async function saveBackfillProgress(db, cursorId, {
   anchorSignature,
   beforeSignature,
-  highWaterSignature
+  highWaterSignature,
+  highWaterSlot = null,
+  highWaterBlockTime = null
 }) {
   if (typeof beforeSignature !== 'string' || beforeSignature.length === 0 ||
       typeof highWaterSignature !== 'string' || highWaterSignature.length === 0 ||
@@ -157,13 +163,15 @@ export async function saveBackfillProgress(db, cursorId, {
       SET backfill_anchor_signature = $2,
           backfill_before_signature = $3,
           backfill_high_water_signature = $4,
+          backfill_high_water_slot = $5,
+          backfill_high_water_block_time = $6,
           status = 'idle',
           last_error = NULL,
           updated_at = NOW()
       WHERE id = $1
       RETURNING ${CURSOR_COLUMNS}
     `,
-    [cursorId, anchorSignature, beforeSignature, highWaterSignature]
+    [cursorId, anchorSignature, beforeSignature, highWaterSignature, highWaterSlot, highWaterBlockTime]
   );
 
   return mapCursor(result.rows[0]);
@@ -186,6 +194,8 @@ export async function completeBackfill(db, cursorId, {
           backfill_anchor_signature = NULL,
           backfill_before_signature = NULL,
           backfill_high_water_signature = NULL,
+          backfill_high_water_slot = NULL,
+          backfill_high_water_block_time = NULL,
           status = 'idle',
           last_error = NULL,
           updated_at = NOW()
