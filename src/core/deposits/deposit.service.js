@@ -232,10 +232,13 @@ export function createDepositService({ db, rpc, network, commitment }) {
       if (!wallet) {
         throw notFound('Wallet address was not found in the local wallet database', 'WALLET_NOT_FOUND');
       }
+      if (wallet.effectiveStatus && wallet.effectiveStatus !== 'active') {
+        throw conflict('Inactive wallets cannot receive newly recorded deposits', 'WALLET_NOT_ACTIVE');
+      }
       if (wallet.network && wallet.network !== network) {
         throw conflict('Wallet network does not match the deposit service network', 'NETWORK_MISMATCH');
       }
-      if (wallet.hdWalletId && hdWalletId && String(wallet.hdWalletId) !== String(hdWalletId)) {
+      if (String(wallet.hdWalletId ?? '') !== String(hdWalletId ?? '')) {
         throw conflict('HD wallet ownership does not match the destination wallet', 'WALLET_OWNERSHIP_MISMATCH');
       }
 
