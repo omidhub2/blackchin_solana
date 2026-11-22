@@ -22,6 +22,8 @@ const scannerScope = process.env.DEPOSIT_SCANNER_SCOPE || 'all';
 const scannerIntervalMs = Number(process.env.DEPOSIT_SCANNER_INTERVAL_MS || 15_000);
 const reconciliationEnabled = process.env.DEPOSIT_RECONCILIATION_ENABLED === 'true';
 const reconciliationIntervalMs = Number(process.env.DEPOSIT_RECONCILIATION_INTERVAL_MS || 60_000);
+const withdrawalReconciliationEnabled = process.env.WITHDRAWAL_RECONCILIATION_ENABLED === 'true';
+const withdrawalReconciliationIntervalMs = Number(process.env.WITHDRAWAL_RECONCILIATION_INTERVAL_MS || 60_000);
 
 if (!Number.isSafeInteger(scannerIntervalMs) || scannerIntervalMs < 1_000) {
   throw new Error('DEPOSIT_SCANNER_INTERVAL_MS must be an integer >= 1000');
@@ -29,10 +31,14 @@ if (!Number.isSafeInteger(scannerIntervalMs) || scannerIntervalMs < 1_000) {
 if (!Number.isSafeInteger(reconciliationIntervalMs) || reconciliationIntervalMs < 5_000) {
   throw new Error('DEPOSIT_RECONCILIATION_INTERVAL_MS must be an integer >= 5000');
 }
+if (!Number.isSafeInteger(withdrawalReconciliationIntervalMs) || withdrawalReconciliationIntervalMs < 5_000) {
+  throw new Error('WITHDRAWAL_RECONCILIATION_INTERVAL_MS must be an integer >= 5000');
+}
 
 let server;
 let worker;
 let reconciliationWorker;
+let withdrawalReconciliationWorker;
 let shuttingDown = false;
 
 async function shutdown(signal) {
@@ -44,6 +50,7 @@ async function shutdown(signal) {
   try {
     // Stop background work first so no scan writes after the pool starts
     // draining, then close HTTP, then the pool.
+    if (withdrawalReconciliationWorker) await withdrawalReconciliationWorker.stop();
     if (reconciliationWorker) await reconciliationWorker.stop();
     if (worker) await worker.stop();
     if (server) await server.close();
@@ -67,12 +74,14 @@ try {
   await pool.query('SELECT event_id FROM webhook_outbox LIMIT 0');
   await pool.query('SELECT bucket_key FROM rate_limit_counters LIMIT 0');
   await pool.query('SELECT last_transaction_id FROM deposit_reconciliation_cursors LIMIT 0');
+  await pool.query('SELECT last_id FROM withdrawal_reconciliation_cursors LIMIT 0');
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
   const { createServices } = await import('./core/services.js');
   const { createDepositScannerWorker } = await import('./workers/deposit-scanner.worker.js');
   const { acquireReconciliationLock } = await import('./infrastructure/database/deposit-reconciliation.repository.js');
+  const { acquireWithdrawalReconciliationLock } = await import('./infrastructure/database/withdrawal-reconciliation.repository.js');
   const { createHealthService } = await import('./core/health.service.js');
 
   // Creating services validates ENCRYPTION_KEY and fails closed before the
@@ -109,12 +118,32 @@ try {
     });
   }
 
+  if (withdrawalReconciliationEnabled) {
+    withdrawalReconciliationWorker = createDepositScannerWorker({
+      scanner: services.withdrawalReconciliation,
+      cursors: {
+        acquireScannerLock: (client, { network }) => acquireWithdrawalReconciliationLock(client, network)
+      },
+      pool,
+      network: scannerNetwork,
+      scope: 'withdrawal-reconciliation',
+      intervalMs: withdrawalReconciliationIntervalMs,
+      log: (message, meta) => console.log(JSON.stringify({
+        time: new Date().toISOString(),
+        message: message.replace('scanner.', 'withdrawal_reconciliation.'),
+        ...meta
+      }))
+    });
+  }
+
   const health = createHealthService({
     pool,
     scanner: worker,
     workerEnabled: scannerEnabled,
     reconciliationWorker,
     reconciliationEnabled,
+    withdrawalReconciliationWorker,
+    withdrawalReconciliationEnabled,
     network: scannerNetwork,
     scope: scannerScope
   });
@@ -127,6 +156,12 @@ try {
     console.log(`Deposit scanner started (network=${scannerNetwork}, scope=${scannerScope})`);
   } else {
     console.log('Deposit scanner disabled (DEPOSIT_SCANNER_ENABLED is not "true")');
+  }
+  if (withdrawalReconciliationWorker) {
+    await withdrawalReconciliationWorker.start();
+    console.log(`Withdrawal reconciliation started (network=${scannerNetwork})`);
+  } else {
+    console.log('Withdrawal reconciliation disabled (WITHDRAWAL_RECONCILIATION_ENABLED is not "true")');
   }
   if (reconciliationWorker) {
     await reconciliationWorker.start();
