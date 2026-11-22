@@ -73,6 +73,8 @@ export function createWithdrawalReconciliationService({
     throw new TypeError('batchSize must be between 1 and 1000');
   }
 
+  let assertCurrentOwnership = async () => {};
+
   const metrics = {
     runs: 0, checked: 0, finalizedSuccess: 0, finalizedFailure: 0,
     pending: 0, unknown: 0, underReview: 0, safePrebroadcastFailed: 0,
@@ -80,9 +82,11 @@ export function createWithdrawalReconciliationService({
   };
 
   async function persistOutcome(candidate, outcome, details, apply) {
+    await assertCurrentOwnership();
     const client = await db.connect();
     try {
       await client.query('BEGIN');
+      await assertCurrentOwnership();
       if (apply) await apply(client);
       await repository.recordWithdrawalReconciliationEvent(client, {
         idempotencyKey: candidate.idempotency_key,
@@ -319,13 +323,15 @@ export function createWithdrawalReconciliationService({
   return Object.freeze({
     metrics,
 
-    async scan({ network: requestedNetwork = network } = {}) {
+    async scan({ network: requestedNetwork = network, assertOwnership = async () => {} } = {}) {
       if (requestedNetwork !== network) {
         const error = new Error('Withdrawal reconciliation network does not match configuration');
         error.code = 'NETWORK_MISMATCH';
         throw error;
       }
 
+      assertCurrentOwnership = assertOwnership;
+      await assertCurrentOwnership();
       metrics.runs += 1;
       metrics.lastRunAt = new Date().toISOString();
       const cursor = await repository.ensureWithdrawalReconciliationCursor(db, network);
@@ -334,6 +340,7 @@ export function createWithdrawalReconciliationService({
       );
 
       if (candidates.length === 0) {
+        await assertCurrentOwnership();
         await repository.completeWithdrawalReconciliationCycle(db, network);
         return {
           network, signatures: 0, checked: 0, recorded: 0,
@@ -355,6 +362,7 @@ export function createWithdrawalReconciliationService({
           summary.failed += 1;
           metrics.rpcErrors += 1;
           metrics.lastError = error.message;
+          await assertCurrentOwnership();
           await repository.recordWithdrawalReconciliationEvent(db, {
             idempotencyKey: candidate.idempotency_key,
             network,
@@ -362,6 +370,7 @@ export function createWithdrawalReconciliationService({
             outcome: 'rpc_error',
             details: { code: error.code ?? 'UNKNOWN' }
           }).catch(() => {});
+          await assertCurrentOwnership();
           await repository.markWithdrawalReconciliationError(db, network, error.message);
           log('withdrawal_reconciliation.transaction_failed', {
             idempotencyId: String(candidate.id),
