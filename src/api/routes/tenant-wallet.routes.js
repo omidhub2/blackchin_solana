@@ -8,7 +8,8 @@ import { createTenantAuthHook, requireTenantScope } from '../middleware/tenant-a
 import { getServices } from '../services-context.js';
 import {
   optionalString, parsePositiveId, rejectUnknownKeys, requireBoolean,
-  requireObject, requireSafeInteger, requireString
+  requireObject, requireSafeInteger, requireString, requirePublicKey,
+  requireSolAmount, requireBoolean, requireIdempotencyKey
 } from '../validation.js';
 import { badRequest } from '../../core/errors.js';
 import { rateLimitHook } from '../middleware/rate-limit.js';
@@ -119,6 +120,35 @@ export async function tenantWalletRoutes(app) {
     const index = requireSafeInteger(parsed, 'accountIndex', { min: 0, max: 2_147_483_647 });
     return services(request).getAccountAtIndex(tenantId(request), id, index);
   });
+  app.post('/withdrawals/estimate', {
+    preHandler: requireTenantScope('withdrawals:estimate')
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol']);
+    return appServices(request).tenantWithdrawals.estimate({
+      tenantId: tenantId(request),
+      fromPublicKey: requirePublicKey(body.fromPublicKey, 'fromPublicKey'),
+      toPublicKey: requirePublicKey(body.toPublicKey, 'toPublicKey'),
+      amountSol: requireSolAmount(body.amountSol)
+    });
+  });
+
+  app.post('/withdrawals', {
+    preHandler: requireTenantScope('withdrawals:write')
+  }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol', 'approved']);
+    const result = await appServices(request).tenantWithdrawals.submit({
+      tenantId: tenantId(request),
+      idempotencyKey: requireIdempotencyKey(request.headers['idempotency-key']),
+      fromPublicKey: requirePublicKey(body.fromPublicKey, 'fromPublicKey'),
+      toPublicKey: requirePublicKey(body.toPublicKey, 'toPublicKey'),
+      amountSol: requireSolAmount(body.amountSol),
+      approved: requireBoolean(body.approved, 'approved')
+    });
+    return reply.code(result.replayed ? 200 : 202).send(result);
+  });
+
   app.get('/monitoring/deposits', {
     preHandler: requireTenantScope('deposits:read')
   }, async (request) => appServices(request).deposits.getMonitoringForTenant(tenantId(request)));
