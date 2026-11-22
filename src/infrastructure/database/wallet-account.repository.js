@@ -88,7 +88,7 @@ export const ACCOUNT_STATUSES = Object.freeze(['active', 'disabled', 'archived']
 export function mapWalletAccount(row) {
   if (!row) return null;
 
-  return {
+  const account = {
     id: String(row.id),
     hdWalletId: row.hd_wallet_id === null || row.hd_wallet_id === undefined
       ? null
@@ -100,9 +100,16 @@ export function mapWalletAccount(row) {
     network: row.network,
     status: row.status,
     createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id)
+    updatedAt: row.updated_at
   };
+
+  // Internal authorization metadata must not leak into public wallet API JSON.
+  Object.defineProperty(account, 'tenantId', {
+    value: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id),
+    enumerable: false
+  });
+
+  return account;
 }
 
 /**
