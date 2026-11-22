@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS tenant_withdrawal_policy_events (
 );
 
 CREATE OR REPLACE FUNCTION prevent_tenant_withdrawal_approval_rebinding()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $policy$
 BEGIN
     IF OLD.tenant_id IS DISTINCT FROM NEW.tenant_id
        OR OLD.credential_id IS DISTINCT FROM NEW.credential_id
@@ -134,7 +134,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$policy$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_tenant_withdrawal_approvals_binding_immutable
     ON tenant_withdrawal_approvals;
