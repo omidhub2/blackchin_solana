@@ -213,7 +213,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
           !transfer ||
           transfer.to !== publicKey ||
           typeof transfer.from !== 'string' ||
-          !/^\\d+$/.test(String(transfer.lamports)) ||
+          !/^\d+$/.test(String(transfer.lamports)) ||
           BigInt(transfer.lamports) <= 0n
         ) {
           throw conflict('Incoming transfer details do not match the destination wallet', 'INVALID_TRANSFER');
