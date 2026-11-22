@@ -31,7 +31,8 @@ export async function tenantWalletRoutes(app) {
   const createLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-hd-create', distributed });
   const accountLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'tenant-address-create', distributed });
   const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'tenant-recovery', distributed });
-  const services = (request) => getServices(app, request).tenantWallets;
+  const appServices = (request) => getServices(app, request);
+  const services = (request) => appServices(request).tenantWallets;
   const tenantId = (request) => request.tenant.id;
 
   app.post('/hd-wallets', {
@@ -125,13 +126,13 @@ export async function tenantWalletRoutes(app) {
       requireSafeInteger(Number(request.query.limit), 'limit', { min: 1, max: 100 });
     const offset = request.query.offset === undefined ? 0 :
       requireSafeInteger(Number(request.query.offset), 'offset', { min: 0, max: 1_000_000 });
-    return services(request).deposits.listForTenant(tenantId(request), { limit, offset });
+    return appServices(request).deposits.listForTenant(tenantId(request), { limit, offset });
   });
 
   app.get('/deposits/:signature', {
     preHandler: requireTenantScope('deposits:read')
   }, async (request) => {
     const signature = requireString(request.params.signature, 'signature', { min: 80, max: 90, pattern: /^[1-9A-HJ-NP-Za-km-z]{80,90}$/ });
-    return services(request).deposits.getForTenant(tenantId(request), signature);
+    return appServices(request).deposits.getForTenant(tenantId(request), signature);
   });
 }
