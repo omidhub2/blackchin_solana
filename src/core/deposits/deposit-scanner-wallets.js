@@ -28,7 +28,7 @@ export async function resolveScanWallets(deps, scope, network) {
     return [...byPublicKey.values()];
   }
 
-  const match = /^hd:(\\d+)$/.exec(scope);
+  const match = /^hd:(\d+)$/.exec(scope);
   if (!match) {
     throw new TypeError(`Unsupported scanner scope: ${scope}`);
   }
