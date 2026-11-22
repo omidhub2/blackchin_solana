@@ -14,6 +14,7 @@ This document describes the **current database**, not the complete target schema
 | 0006 | `0006_deposit_scanner_backfill.sql` | persistent scanner backfill progress |
 | 0007 | `0007_deposit_reconciliation.sql` | deposit reconciliation cursor and append-only evidence |
 | 0008 | `0008_withdrawal_reconciliation.sql` | withdrawal reconciliation cursor and append-only evidence |
+| 0009 | `0009_tenant_foundation.sql` | tenant registry, hashed API credential records and nullable tenant attribution columns |
 
 ## 2. Current tables and their meaning
 
