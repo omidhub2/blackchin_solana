@@ -24,7 +24,7 @@ export function createDepositReconciliationService({
   return Object.freeze({
     metrics,
 
-    async scan({ network: requestedNetwork = network } = {}) {
+    async scan({ network: requestedNetwork = network, assertOwnership = async () => {} } = {}) {
       if (requestedNetwork !== network) {
         const error = new Error('Reconciliation network does not match configured network');
         error.code = 'NETWORK_MISMATCH';
@@ -33,12 +33,14 @@ export function createDepositReconciliationService({
 
       metrics.runs += 1;
       metrics.lastRunAt = new Date().toISOString();
+      await assertOwnership();
       const cursor = await repository.ensureReconciliationCursor(db, network);
       const candidates = await repository.listReconciliationCandidates(
         db, network, cursor.lastTransactionId, batchSize
       );
 
       if (candidates.length === 0) {
+        await assertOwnership();
         await repository.completeReconciliationCycle(db, network);
         return { network, signatures: 0, checked: 0, recorded: 0, duplicates: 0, failed: 0, cycleCompleted: true };
       }
@@ -50,6 +52,7 @@ export function createDepositReconciliationService({
 
       for (const transaction of candidates) {
         try {
+          await assertOwnership();
           const updated = await deposits.refreshDeposit(
             transaction.signature, transaction.walletPublicKey
           );
@@ -60,6 +63,7 @@ export function createDepositReconciliationService({
               ? 'recovered'
               : 'consistent';
 
+          await assertOwnership();
           await repository.recordEventAndAdvanceCursor(db, {
             transactionId: transaction.id,
             network,
@@ -80,6 +84,7 @@ export function createDepositReconciliationService({
           summary.failed += 1;
           metrics.rpcErrors += 1;
           metrics.lastError = error.message;
+          await assertOwnership();
           await repository.recordReconciliationEvent(db, {
             transactionId: transaction.id,
             network,
@@ -88,6 +93,7 @@ export function createDepositReconciliationService({
             resultingStatus: null,
             details: { code: error.code ?? 'UNKNOWN' }
           }).catch(() => {});
+          await assertOwnership();
           await repository.markReconciliationError(db, network, error.message);
           log('deposit_reconciliation.transaction_failed', {
             transactionId: transaction.id, code: error.code ?? 'UNKNOWN'
