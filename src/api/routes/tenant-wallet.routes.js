@@ -119,6 +119,9 @@ export async function tenantWalletRoutes(app) {
     const index = requireSafeInteger(parsed, 'accountIndex', { min: 0, max: 2_147_483_647 });
     return services(request).getAccountAtIndex(tenantId(request), id, index);
   });
+  app.get('/monitoring/deposits', {
+    preHandler: requireTenantScope('deposits:read')
+  }, async (request) => appServices(request).deposits.getMonitoringForTenant(tenantId(request)));
   app.get('/deposits', {
     preHandler: requireTenantScope('deposits:read')
   }, async (request) => {
