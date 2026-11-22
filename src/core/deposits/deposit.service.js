@@ -319,10 +319,15 @@ export function createDepositService({ db, rpc, network, commitment }) {
         }
       });
 
-      if (inserted.created || tenantId === null || tenantId === undefined) return inserted;
+      if (inserted.created) return inserted;
 
-      const tenantExisting = await findDeposit(signature, publicKey, tenantId);
-      if (tenantExisting) return { transaction: tenantExisting, created: false };
+      if (tenantId === null || tenantId === undefined) {
+        const unassignedExisting = await findDeposit(signature, publicKey);
+        if (unassignedExisting) return { transaction: unassignedExisting, created: false };
+      } else {
+        const tenantExisting = await findDeposit(signature, publicKey, tenantId);
+        if (tenantExisting) return { transaction: tenantExisting, created: false };
+      }
 
       // A global uniqueness conflict may be a legacy NULL-tenant row or a
       // record owned by another tenant. Never adopt or expose that record.
