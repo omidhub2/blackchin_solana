@@ -17,7 +17,6 @@ import {
   listDepositsForTenant,
   getDepositMonitoringForTenant,
   insertBlockchainTransaction,
-  updateTransactionStatus,
   updateTransactionStatusForTenant,
   updateUnassignedTransactionStatus
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
