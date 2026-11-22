@@ -21,4 +21,4 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run deposit scanner tests
-        run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js test/deposit.service.test.js test/deposit-reconciliation.service.test.js test/withdrawal-reconciliation.service.test.js test/hd-transactions.test.js test/migrations.test.js && npm run check:imports
+        run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js test/deposit.service.test.js test/deposit-reconciliation.service.test.js test/withdrawal-reconciliation.service.test.js test/hd-transactions.test.js test/migrations.test.js && node --check src/index.js && node --check src/core/services.js && node --check src/core/health.service.js && node --check src/core/withdrawals/withdrawal.service.js && node --check src/core/withdrawals/withdrawal-reconciliation.service.js && node --check src/infrastructure/database/withdrawal-reconciliation.repository.js
