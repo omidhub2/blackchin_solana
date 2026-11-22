@@ -9,7 +9,7 @@ import { getServices } from '../services-context.js';
 import {
   optionalString, parsePositiveId, rejectUnknownKeys, requireBoolean,
   requireObject, requireSafeInteger, requireString, requirePublicKey,
-  requireSolAmount, requireBoolean, requireIdempotencyKey
+  requireSolAmount, requireIdempotencyKey
 } from '../validation.js';
 import { badRequest } from '../../core/errors.js';
 import { rateLimitHook } from '../middleware/rate-limit.js';
