@@ -73,10 +73,7 @@ test('reconciliation records RPC failures and does not advance beyond an unverif
     db: h.db, deposits: h.deposits, network: 'devnet', batchSize: 10
   });
 
-  const result = await service.scan({ network: 'devnet' });
-
-  assert.equal(result.checked, 0);
-  assert.equal(result.failed, 1);
+  await assert.rejects(() => service.scan({ network: 'devnet' }), /RPC unavailable/);
   assert.equal(h.calls.filter((call) => call.sql.includes('INSERT INTO deposit_reconciliation_events')).length, 1);
   assert.equal(h.calls.filter((call) => call.sql.includes('UPDATE deposit_reconciliation_cursors')).length, 1);
   const event = h.calls.find((call) => call.sql.includes('INSERT INTO deposit_reconciliation_events'));
