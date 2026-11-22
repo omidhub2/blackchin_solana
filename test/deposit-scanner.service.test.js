@@ -283,7 +283,7 @@ test('scanner resumes a maxBatch backfill across runs and publishes high-water o
     async refreshDeposit() {},
     async recordVerifiedDeposit() { throw new Error('No transfer expected'); }
   };
-  const scanner = createDepositScanner({
+  const createScanner = () => createDepositScanner({
     db: {},
     rpc,
     deposits,
@@ -293,18 +293,20 @@ test('scanner resumes a maxBatch backfill across runs and publishes high-water o
     maxBatch: 1
   });
 
-  const first = await scanner.scan({ network: 'devnet', scope: 'all' });
+  // Recreate the scanner between runs to model a worker/process restart. The
+  // only continuation state is the cursor repository's persisted state object.
+  const first = await createScanner().scan({ network: 'devnet', scope: 'all' });
   assert.equal(first.stopped, 'batch_limit');
   assert.equal(state.lastSignature, 'old-anchor');
   assert.equal(state.backfillBeforeSignature, 'newest');
   assert.equal(state.backfillHighWaterSignature, 'newest');
 
-  const second = await scanner.scan({ network: 'devnet', scope: 'all' });
+  const second = await createScanner().scan({ network: 'devnet', scope: 'all' });
   assert.equal(second.stopped, 'batch_limit');
   assert.equal(state.lastSignature, 'old-anchor');
   assert.equal(state.backfillBeforeSignature, 'older-1');
 
-  const third = await scanner.scan({ network: 'devnet', scope: 'all' });
+  const third = await createScanner().scan({ network: 'devnet', scope: 'all' });
   assert.equal(third.stopped, undefined);
   assert.equal(state.lastSignature, 'newest');
   assert.equal(state.backfillBeforeSignature, null);
