@@ -341,3 +341,54 @@ export async function findAccountByPathForTenant(db, tenantId, hdWalletId, deriv
   );
   return mapWalletAccount(result.rows[0]);
 }
+
+
+/**
+ * Resolve a deposit destination strictly inside one tenant. Legacy rows with
+ * tenant_id NULL are intentionally invisible to this lookup.
+ */
+export async function resolveDepositWalletForTenant(db, tenantId, publicKey) {
+  const tenant = assertTenantId(tenantId);
+  if (typeof publicKey !== 'string' || publicKey.length === 0) {
+    throw new TypeError('publicKey is required');
+  }
+  const account = await findAccountByPublicKeyForTenant(db, tenant, publicKey);
+  if (account) {
+    const root = await findHdWalletByIdForTenant(db, tenant, account.hdWalletId);
+    if (!root) return null;
+    return {
+      publicKey: account.publicKey,
+      walletType: 'hd_child',
+      status: account.status,
+      effectiveStatus: account.status === 'active' && root.status === 'active'
+        ? 'active'
+        : (account.status === 'active' ? root.status : account.status),
+      parentStatus: root.status,
+      network: account.network,
+      hdWalletId: account.hdWalletId,
+      accountIndex: account.accountIndex,
+      derivationPath: account.derivationPath,
+      tenantId: tenant
+    };
+  }
+
+  const legacy = await db.query(
+    `SELECT public_key FROM wallets
+     WHERE tenant_id = $1 AND public_key = $2
+     LIMIT 1`,
+    [tenant, publicKey]
+  );
+  if (!legacy.rows[0]) return null;
+  return {
+    publicKey: legacy.rows[0].public_key,
+    walletType: 'standalone',
+    status: 'active',
+    effectiveStatus: 'active',
+    parentStatus: null,
+    network: null,
+    hdWalletId: null,
+    accountIndex: null,
+    derivationPath: null,
+    tenantId: tenant
+  };
+}
