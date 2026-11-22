@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { Keypair } from '@solana/web3.js';
 import { buildServer } from '../src/api/server.js';
 
-function harness(scopes = ['withdrawals:estimate', 'withdrawals:write']) {
+function harness(scopes = ['withdrawals:estimate', 'withdrawals:submit']) {
   const apiKey = 'bc_live_tenantwithdraw.secret';
   const secretHash = crypto.createHash('sha256').update(apiKey).digest();
   const calls = [];
@@ -97,6 +97,20 @@ test('tenant withdrawal detail lookup receives authenticated tenant and idempote
     assert.deepEqual(h.calls[0], ['get', { tenantId: '42', idempotencyKey: 'tenant-withdrawal-key-001' }]);
   } finally { await app.close(); }
 });
+test('tenant withdrawal submit accepts the supported withdrawals:submit scope', async () => {
+  const h = harness(['withdrawals:submit']);
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/tenant/withdrawals',
+      headers: { 'x-api-key': h.apiKey, 'idempotency-key': 'tenant-withdrawal-key-001' },
+      payload: { fromPublicKey: sender, toPublicKey: recipient, amountSol: '0.25', approvalReference: 'partner-approval-001' }
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(h.calls[0][0], 'submit');
+  } finally { await app.close(); }
+});
+
 test('tenant withdrawal routes enforce operation scopes', async () => {
   const h = harness(['withdrawals:estimate']);
   const app = buildServer({ logger: false, services: h.services });
