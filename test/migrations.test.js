@@ -169,6 +169,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0008'));
   assert.ok(versions.includes('0009'));
   assert.ok(versions.includes('0010'));
+  assert.ok(versions.includes('0011'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -255,6 +256,17 @@ test('0009 adds tenant registry and nullable ownership foundation without guessi
   assert.match(sql, /Existing rows remain unassigned/i);
 });
 
+test('0011 separates tenant idempotency namespaces while preserving legacy key uniqueness', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0011_tenant_idempotency_namespace.sql'),
+    'utf8'
+  );
+  assert.match(sql, /WHERE tenant_id IS NULL/i);
+  assert.match(sql, /ON api_idempotency_keys\\(idempotency_key\\)/i);
+  assert.match(sql, /ON api_idempotency_keys\\(tenant_id, idempotency_key\\)/i);
+  assert.doesNotMatch(sql, /UPDATE\\s+api_idempotency_keys\\s+SET\\s+tenant_id/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
 test('0010 binds Solana withdrawal reconciliation evidence to tenant identity without reassigning legacy rows', async () => {
   const sql = await readFile(
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0010_tenant_withdrawal_reconciliation.sql'),
