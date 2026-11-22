@@ -76,6 +76,9 @@ try {
   await pool.query('SELECT last_transaction_id FROM deposit_reconciliation_cursors LIMIT 0');
   await pool.query('SELECT last_id FROM withdrawal_reconciliation_cursors LIMIT 0');
   await pool.query('SELECT tenant_credential_id, approval_reference FROM api_idempotency_keys LIMIT 0');
+  await pool.query('SELECT enabled, emergency_frozen, policy_version FROM tenant_withdrawal_policies LIMIT 0');
+  await pool.query('SELECT approval_reference, issuer_event_id, status FROM tenant_withdrawal_approvals LIMIT 0');
+  await pool.query('SELECT decision, reason_code FROM tenant_withdrawal_policy_events LIMIT 0');
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
