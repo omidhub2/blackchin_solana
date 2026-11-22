@@ -10,7 +10,7 @@
  *   6. broadcast, confirm, record the immutable ledger row,
  *   7. mark the idempotency key completed in the same database transaction.
  *
- * A reservation left in `processing` is never replayed automatically.
+ * The idempotency guard left in `processing` is never replayed automatically; it is not a monetary balance reservation.
  */
 import crypto from 'node:crypto';
 
