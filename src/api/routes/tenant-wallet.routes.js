@@ -153,7 +153,7 @@ export async function tenantWalletRoutes(app) {
   });
 
   app.post('/withdrawals', {
-    preHandler: [requireTenantScope('withdrawals:write'), withdrawalSubmitLimiter]
+    preHandler: [requireTenantScope('withdrawals:submit'), withdrawalSubmitLimiter]
   }, async (request, reply) => {
     const body = requireObject(request.body ?? {}, 'body');
     rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol', 'approvalReference']);
