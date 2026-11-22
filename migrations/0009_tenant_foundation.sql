@@ -127,7 +127,7 @@ BEGIN
             ON DELETE RESTRICT;
     END IF;
 END;
-$;
+$$;
 
 -- When a tenant is assigned to a record, its ownership binding cannot be
 -- silently changed later. NULL -> tenant assignment remains possible for a
