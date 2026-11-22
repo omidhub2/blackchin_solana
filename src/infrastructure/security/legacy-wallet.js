@@ -7,9 +7,8 @@
 import { Keypair } from '@solana/web3.js';
 
 import { conflict } from '../../core/errors.js';
-import { loadWalletByPublicKey } from '../../../PostgreSQL/walletStorage.js';
-
 export async function findLegacyWalletByPublicKey(publicKey) {
+  const { loadWalletByPublicKey } = await import('../../../PostgreSQL/walletStorage.js');
   return loadWalletByPublicKey(publicKey);
 }
 
