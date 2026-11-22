@@ -297,7 +297,6 @@ export function createDepositScanner({
                 metrics.duplicatesSkipped += 1;
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
               }
-              newestHandled ??= entry;
             }
 
             if (!pageHandled) break;
@@ -360,7 +359,7 @@ export function createDepositScanner({
             const highWaterBlockTime = highWaterEntry?.blockTime
               ? new Date(highWaterEntry.blockTime * 1000)
               : null;
-            const advanced = resumingBackfill || before !== null
+            const advanced = resumingBackfill
               ? await cursors.completeBackfill(db, cursor.id, {
                 lastSignature: highWaterSignature,
                 lastSlot: highWaterSlot,
