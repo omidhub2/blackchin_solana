@@ -21,4 +21,4 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run deposit scanner tests
-        run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js
+        run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js test/migrations.test.js
