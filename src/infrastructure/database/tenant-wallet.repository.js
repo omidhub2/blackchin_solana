@@ -54,7 +54,7 @@ export async function findAccountByIdForTenant(db, tenantId, accountId) {
   const tenant = assertTenantId(tenantId);
   const result = await db.query(
     `SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
-            wallet_type, network, status, created_at, updated_at
+            wallet_type, network, status, created_at, updated_at, tenant_id
      FROM wallet_accounts
      WHERE tenant_id = $1 AND id = $2
      LIMIT 1`,
@@ -68,7 +68,7 @@ export async function findAccountByPublicKeyForTenant(db, tenantId, publicKey) {
   const tenant = assertTenantId(tenantId);
   const result = await db.query(
     `SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
-            wallet_type, network, status, created_at, updated_at
+            wallet_type, network, status, created_at, updated_at, tenant_id
      FROM wallet_accounts
      WHERE tenant_id = $1 AND public_key = $2
      LIMIT 1`,
@@ -82,7 +82,7 @@ export async function findAccountAtIndexForTenant(db, tenantId, hdWalletId, acco
   const tenant = assertTenantId(tenantId);
   const result = await db.query(
     `SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
-            wallet_type, network, status, created_at, updated_at
+            wallet_type, network, status, created_at, updated_at, tenant_id
      FROM wallet_accounts
      WHERE tenant_id = $1 AND hd_wallet_id = $2 AND account_index = $3
      LIMIT 1`,
@@ -101,7 +101,7 @@ export async function listAccountsByHdWalletForTenant(
   const tenant = assertTenantId(tenantId);
   const result = await db.query(
     `SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
-            wallet_type, network, status, created_at, updated_at
+            wallet_type, network, status, created_at, updated_at, tenant_id
      FROM wallet_accounts
      WHERE tenant_id = $1 AND hd_wallet_id = $2
      ORDER BY account_index ASC
@@ -133,7 +133,7 @@ export async function updateAccountStatusForTenant(db, tenantId, publicKey, stat
      SET status = $3, updated_at = NOW()
      WHERE tenant_id = $1 AND public_key = $2
      RETURNING id, hd_wallet_id, public_key, account_index, derivation_path,
-               wallet_type, network, status, created_at, updated_at`,
+               wallet_type, network, status, created_at, updated_at, tenant_id`,
     [tenant, publicKey, status]
   );
 
@@ -320,7 +320,7 @@ export async function insertWalletAccountsForTenant(db, tenantId, accounts) {
      FROM UNNEST($2::bigint[], $3::text[], $4::bigint[], $5::text[], $6::text[])
        AS rows(hd_wallet_id, public_key, account_index, derivation_path, network)
      RETURNING id, hd_wallet_id, public_key, account_index, derivation_path,
-               wallet_type, network, status, created_at, updated_at`,
+               wallet_type, network, status, created_at, updated_at, tenant_id`,
     [tenant, accounts.map((account) => account.hdWalletId),
       accounts.map((account) => account.publicKey),
       accounts.map((account) => account.accountIndex), derivationPaths,
@@ -333,7 +333,7 @@ export async function findAccountByPathForTenant(db, tenantId, hdWalletId, deriv
   const tenant = assertTenantId(tenantId);
   const result = await db.query(
     `SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
-            wallet_type, network, status, created_at, updated_at
+            wallet_type, network, status, created_at, updated_at, tenant_id
      FROM wallet_accounts
      WHERE tenant_id = $1 AND hd_wallet_id = $2 AND derivation_path = $3
      LIMIT 1`,
