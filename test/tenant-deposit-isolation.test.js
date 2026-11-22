@@ -100,5 +100,6 @@ test('tenant transaction lookup and history SQL always constrain tenant_id', asy
   assert.deepEqual(await getDepositMonitoringForTenant(db, '41'), []);
   assert.match(calls[0].sql, /tenant_id = \$1/);
   assert.match(calls[1].sql, /tenant_id = \$1 AND direction = 'deposit'/);
+  assert.match(calls[2].sql, /tenant_id = \\$1 AND direction = 'deposit'/);
   assert.deepEqual(calls.map((call) => call.params[0]), ['41', '41', '41']);
 });
