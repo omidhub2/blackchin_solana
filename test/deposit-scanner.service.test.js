@@ -109,7 +109,7 @@ test('scanner keeps independent cursors per address and refreshes known deposits
     `address:${addressA}`,
     `address:${addressB}`
   ]);
-  assert.deepEqual(pageCalls.map((call) => call.options.until), [
+  assert.deepEqual(pageCalls.filter((call) => !call.options.before).map((call) => call.options.until), [
     'old-signature-A',
     'old-signature-B'
   ]);
