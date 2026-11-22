@@ -100,6 +100,35 @@ CREATE INDEX IF NOT EXISTS idx_api_idempotency_keys_tenant_created
 CREATE INDEX IF NOT EXISTS idx_webhook_outbox_tenant_status
     ON webhook_outbox(tenant_id, status, next_attempt_at);
 
+
+-- For HD-derived records, the tenant must match the parent root. NULL tenant
+-- values remain valid only for legacy/unassigned rows during migration.
+DO $
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_wallet_accounts_tenant_hd_wallet'
+    ) THEN
+        ALTER TABLE wallet_accounts
+            ADD CONSTRAINT fk_wallet_accounts_tenant_hd_wallet
+            FOREIGN KEY (tenant_id, hd_wallet_id)
+            REFERENCES hd_wallets(tenant_id, id)
+            ON DELETE RESTRICT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_blockchain_transactions_tenant_hd_wallet'
+    ) THEN
+        ALTER TABLE blockchain_transactions
+            ADD CONSTRAINT fk_blockchain_transactions_tenant_hd_wallet
+            FOREIGN KEY (tenant_id, hd_wallet_id)
+            REFERENCES hd_wallets(tenant_id, id)
+            ON DELETE RESTRICT;
+    END IF;
+END;
+$;
+
 -- When a tenant is assigned to a record, its ownership binding cannot be
 -- silently changed later. NULL -> tenant assignment remains possible for a
 -- controlled, verified legacy-data migration.
