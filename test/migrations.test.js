@@ -237,6 +237,8 @@ test('0009 adds tenant registry and nullable ownership foundation without guessi
     'utf8'
   );
 
+  assert.match(sql, /DO \$\$[\s\S]*?\$\$;/i);
+  assert.doesNotMatch(sql, /\bDO \$(?:\r?\n|\s)/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS tenants/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_api_credentials/i);
   assert.match(sql, /secret_hash BYTEA NOT NULL[\s\S]*octet_length\(secret_hash\) = 32/i);
