@@ -22,7 +22,10 @@ export async function resolveScanWallets(deps, scope, network) {
     for (const wallet of [...standaloneWallets, ...hdWallets]) {
       const existing = byPublicKey.get(wallet.publicKey);
       if (!existing || wallet.hdWalletId !== null) {
-        byPublicKey.set(wallet.publicKey, wallet);
+        byPublicKey.set(wallet.publicKey, {
+          ...wallet,
+          tenantId: wallet.tenantId ?? null
+        });
       }
     }
     return [...byPublicKey.values()];
