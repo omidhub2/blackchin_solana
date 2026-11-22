@@ -269,7 +269,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
                 transaction_signature = $3,
                 updated_at = NOW()
             WHERE idempotency_key = $1
-              AND network = $3
+              AND network = $4
           `,
           [idempotencyKey, JSON.stringify(response), sent.signature, network]
         );
