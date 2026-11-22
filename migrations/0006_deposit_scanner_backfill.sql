@@ -4,7 +4,9 @@
 ALTER TABLE deposit_scanner_cursors
     ADD COLUMN IF NOT EXISTS backfill_anchor_signature TEXT,
     ADD COLUMN IF NOT EXISTS backfill_before_signature TEXT,
-    ADD COLUMN IF NOT EXISTS backfill_high_water_signature TEXT;
+    ADD COLUMN IF NOT EXISTS backfill_high_water_signature TEXT,
+    ADD COLUMN IF NOT EXISTS backfill_high_water_slot BIGINT,
+    ADD COLUMN IF NOT EXISTS backfill_high_water_block_time TIMESTAMPTZ;
 
 ALTER TABLE deposit_scanner_cursors
     ADD CONSTRAINT chk_deposit_scanner_backfill_state
