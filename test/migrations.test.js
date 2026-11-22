@@ -168,6 +168,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0007'));
   assert.ok(versions.includes('0008'));
   assert.ok(versions.includes('0009'));
+  assert.ok(versions.includes('0010'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -252,4 +253,21 @@ test('0009 adds tenant registry and nullable ownership foundation without guessi
   assert.match(sql, /BEFORE UPDATE OF tenant_id ON blockchain_transactions/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
   assert.match(sql, /Existing rows remain unassigned/i);
+});
+
+test('0010 binds Solana withdrawal reconciliation evidence to tenant identity without reassigning legacy rows', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0010_tenant_withdrawal_reconciliation.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS tenant_id BIGINT/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS uq_api_idempotency_tenant_key/i);
+  assert.match(sql, /FOREIGN KEY \(tenant_id, idempotency_key\)/i);
+  assert.match(sql, /REFERENCES api_idempotency_keys\(tenant_id, idempotency_key\)/i);
+  assert.match(sql, /MATCH SIMPLE semantics intentionally allow historical rows/i);
+  assert.match(sql, /idx_withdrawal_reconciliation_events_tenant_checked/i);
+  assert.doesNotMatch(sql, /UPDATE\s+withdrawal_reconciliation_events/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+  assert.match(sql, /globally unique idempotency_key constraint is deliberately retained/i);
 });
