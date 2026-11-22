@@ -6,6 +6,11 @@
 ALTER TABLE api_idempotency_keys
     ADD COLUMN IF NOT EXISTS network TEXT
         CHECK (network IS NULL OR network IN ('devnet', 'testnet', 'mainnet-beta'));
+ALTER TABLE api_idempotency_keys
+    ADD COLUMN IF NOT EXISTS to_public_key TEXT;
+ALTER TABLE api_idempotency_keys
+    ADD COLUMN IF NOT EXISTS amount_lamports NUMERIC(30, 0)
+        CHECK (amount_lamports IS NULL OR amount_lamports > 0);
 
 CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_cursors (
     id BIGSERIAL PRIMARY KEY,
