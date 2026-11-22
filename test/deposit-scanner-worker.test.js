@@ -25,6 +25,10 @@ test('worker retries lock acquisition without becoming permanently idle', async 
     pool: {
       async connect() {
         return {
+          async query(sql) {
+            assert.equal(sql, 'SELECT 1');
+            return { rows: [{ '?column?': 1 }] };
+          },
           release() {
             releasedClients += 1;
           }
@@ -78,6 +82,10 @@ test('worker applies exponential backoff after a scan failure', async () => {
     pool: {
       async connect() {
         return {
+          async query(sql) {
+            assert.equal(sql, 'SELECT 1');
+            return { rows: [{ '?column?': 1 }] };
+          },
           release() {
             releasedClients += 1;
           }
