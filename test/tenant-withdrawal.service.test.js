@@ -9,6 +9,7 @@ function walletDb({ account = true, parent = true } = {}) {
   const calls = [];
   return {
     calls,
+    async connect() { throw new Error('connect should not be reached in policy preflight tests'); },
     async query(sql, params) {
       const query = String(sql);
       calls.push({ query, params });
