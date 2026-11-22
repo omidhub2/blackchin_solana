@@ -190,9 +190,13 @@ export function createWithdrawalReconciliationService({
     }
 
     const transfer = extractSingleNativeTransfer(parsed, candidate.wallet_public_key);
-    if (!transfer) {
+    if (
+      !transfer ||
+      transfer.to !== candidate.to_public_key ||
+      transfer.amountLamports !== String(candidate.amount_lamports)
+    ) {
       await persistOutcome(candidate, 'under_review', {
-        reason: 'Parsed finalized transaction does not match the expected single native SOL transfer from the stored sender'
+        reason: 'Parsed finalized transaction does not match the persisted sender, destination and exact lamport amount'
       });
       metrics.underReview += 1;
       return 'under_review';
