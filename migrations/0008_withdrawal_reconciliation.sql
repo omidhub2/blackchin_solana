@@ -1,6 +1,12 @@
 -- Durable, append-only reconciliation evidence for ambiguous native SOL withdrawals.
 -- This migration does not create or modify a monetary reservation/ledger system.
 
+-- Pin each idempotency record to the chain selected when the withdrawal was submitted.
+-- Legacy rows remain NULL and are deliberately excluded from automatic reconciliation.
+ALTER TABLE api_idempotency_keys
+    ADD COLUMN IF NOT EXISTS network TEXT
+        CHECK (network IS NULL OR network IN ('devnet', 'testnet', 'mainnet-beta'));
+
 CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_cursors (
     id BIGSERIAL PRIMARY KEY,
     network TEXT NOT NULL CHECK (network IN ('devnet', 'testnet', 'mainnet-beta')),
