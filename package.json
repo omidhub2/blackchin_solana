@@ -17,12 +17,13 @@
     "test:hd": "node --test test/hd-derivation.test.js test/hd-security.test.js test/hd-wallet-service.test.js test/hd-signer-and-child.test.js test/hd-transactions.test.js test/hd-hardening.test.js",
     "test:api": "node --test test/api.test.js",
     "test:ledger": "node --test test/ledger-immutability.test.js",
-    "test:unit": "node --test test/hd-derivation.test.js test/hd-security.test.js test/hd-wallet-service.test.js test/hd-signer-and-child.test.js test/hd-transactions.test.js test/hd-hardening.test.js test/ledger-immutability.test.js test/sol-transfer.test.js test/migrations.test.js test/api.test.js",
+    "test:unit": "node --test test/hd-derivation.test.js test/hd-security.test.js test/hd-wallet-service.test.js test/hd-signer-and-child.test.js test/hd-transactions.test.js test/hd-hardening.test.js test/ledger-immutability.test.js test/sol-transfer.test.js test/migrations.test.js test/api.test.js test/withdrawal-reconciliation.service.test.js",
     "check:imports": "node test/tools/check-imports.mjs",
     "api:start": "node src/index.js",
     "db:migrate": "node scripts/migrate.js up",
     "db:migrate:status": "node scripts/migrate.js status",
-    "test:migrations": "node --test test/migrations.test.js"
+    "test:migrations": "node --test test/migrations.test.js",
+    "test:withdrawal-reconciliation": "node --test test/withdrawal-reconciliation.service.test.js"
   },
   "dependencies": {
     "@scure/bip39": "^2.4.0",
