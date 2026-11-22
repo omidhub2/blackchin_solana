@@ -691,6 +691,7 @@ export async function estimateSolTransfer({
  *   toPublicKey: string,
  *   amountSol: string,
  *   getKeypair: () => import('@solana/web3.js').Keypair,
+ *   onSigned?: ({ signature, blockhash, lastValidBlockHeight }) => Promise<void>,
  *   commitment?: 'processed'|'confirmed'|'finalized'
  * }} options
  */
@@ -773,8 +774,8 @@ export async function sendSolWithSigner({
   let signature;
   try {
     signature = await connection.sendRawTransaction(rawTransaction, {
-    skipPreflight: false,
-    preflightCommitment: commitmentLevel,
+      skipPreflight: false,
+      preflightCommitment: commitmentLevel,
       maxRetries: 3
     });
   } catch (error) {
