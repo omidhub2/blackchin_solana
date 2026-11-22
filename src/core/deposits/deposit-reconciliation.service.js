@@ -60,7 +60,7 @@ export function createDepositReconciliationService({
               ? 'recovered'
               : 'consistent';
 
-          await repository.recordReconciliationEvent(db, {
+          await repository.recordEventAndAdvanceCursor(db, {
             transactionId: transaction.id,
             network,
             outcome,
@@ -72,7 +72,6 @@ export function createDepositReconciliationService({
               commitment: updated?.commitment ?? transaction.commitment ?? null
             }
           });
-          await repository.advanceReconciliationCursor(db, network, transaction.id);
 
           summary.checked += 1;
           metrics.checked += 1;
