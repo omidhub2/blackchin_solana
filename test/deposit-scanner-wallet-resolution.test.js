@@ -77,3 +77,19 @@ test('tenant ownership is retained for tenant-owned HD scanner targets', async (
     { publicKey: 'tenant-address', hdWalletId: '91', tenantId: '73' }
   ]);
 });
+
+test('scanner excludes a public key with conflicting explicit tenant owners', async () => {
+  const db = {
+    async query(sql) {
+      if (sql.includes('FROM wallet_accounts AS account')) {
+        return { rows: [{ public_key: 'shared-tenant-address', hd_wallet_id: '8', tenant_id: '82' }] };
+      }
+      if (sql.includes('FROM wallets')) {
+        return { rows: [{ public_key: 'shared-tenant-address', tenant_id: '81' }] };
+      }
+      throw new Error('Unexpected query');
+    }
+  };
+  const wallets = await resolveScanWallets({ db }, 'all', 'devnet');
+  assert.deepEqual(wallets, []);
+});
