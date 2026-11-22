@@ -112,16 +112,15 @@ Never run automated tests against mainnet or with funded wallets.
 
 ## 8. Reconciliation of stuck withdrawals
 
-Rows in `api_idempotency_keys` with `status='processing'` mean a broadcast may
-have happened but completion was not recorded. Check the stored
-`transaction_signature`/logs and the chain for the sender address, then either:
-
-- confirm the transaction exists → mark the row `completed` with the real
-  response, or
-- confirm nothing was broadcast → mark it `failed` so the caller may retry with
-  a new key.
-
-Never delete the row: it is the only guard against a duplicate send.
+Rows in `api_idempotency_keys` with `status='processing'` may represent a
+broadcast whose completion was not recorded. Prefer the automated withdrawal
+reconciliation worker (section 10) after migration 0008. Never mark a signed
+withdrawal failed merely because one RPC lookup returns no result: absence is
+not proof that a submitted transaction cannot still land. Legacy processing
+rows without a recorded network/intent are deliberately excluded from
+automation and require manual investigation using trusted historical logs and
+an authoritative RPC/indexer. Never delete the idempotency row: it prevents a
+duplicate send.
 
 
 ## 9. Deposit reconciliation
