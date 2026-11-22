@@ -284,8 +284,15 @@ export function createDepositScanner({
             // Do not move the high-water cursor when the bounded scan window
             // may have more pages; doing so would skip older unprocessed rows.
             if (page === pages - 1) {
-              stopReason = 'batch_limit';
-              break;
+              const remaining = await fetchPage(wallet.publicKey, {
+                after: cursor.lastSignature,
+                before,
+                limit: 1
+              });
+              if (remaining.length > 0) {
+                stopReason = 'batch_limit';
+                break;
+              }
             }
           }
 
