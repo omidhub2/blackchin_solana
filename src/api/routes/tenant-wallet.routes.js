@@ -61,7 +61,6 @@ export async function tenantWalletRoutes(app) {
   });
 
   app.post('/hd-wallets/:id/recovery-phrase/consume', {
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     preHandler: requireTenantScope('wallets:write')
   }, async (request, reply) => {
     const id = parsePositiveId(request.params.id, 'id');
