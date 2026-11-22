@@ -172,6 +172,19 @@ test('old processing row without signature is failed only at the safe pre-broadc
   assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[4] === 'safe_prebroadcast_failed'), true);
 });
 
+test('tenant withdrawal reconciliation never falls back to a global wallet lookup', async () => {
+  const h = harness({
+    row: candidate({ tenant_id: '42' }),
+    signatureStatus: { confirmationStatus: 'finalized', err: null, slot: 123 },
+    parsed: parsedTransfer()
+  });
+  const service = createWithdrawalReconciliationService({ db: h.db, rpc: h.rpc, network: 'devnet' });
+  await service.scan();
+  const evidence = h.clientCalls.find((call) => call.query.includes('INSERT INTO withdrawal_reconciliation_events'));
+  assert.equal(evidence.params[0], '42');
+  assert.equal(evidence.params[4], 'under_review');
+  assert.equal(h.calls.some((call) => call.query.includes('FROM wallets')), false);
+});
 test('RPC errors do not advance the reconciliation cursor', async () => {
   const h = harness({ rpcError: new Error('RPC unavailable') });
   const service = createWithdrawalReconciliationService({ db: h.db, rpc: h.rpc, network: 'devnet' });
