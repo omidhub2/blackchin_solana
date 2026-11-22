@@ -199,7 +199,7 @@ test('previously credited deposits enter review when missing from chain and reco
       if (sql.includes('SELECT tenant_id FROM wallet_accounts')) {
         return { rows: [], rowCount: 0 };
       }
-      if (sql.includes('FROM blockchain_transactions') && sql.includes('WHERE signature = $1')) {
+      if (sql.includes('FROM blockchain_transactions') && sql.includes('WHERE tenant_id IS NULL AND signature = $1')) {
         return { rows: [existing], rowCount: 1 };
       }
       if (sql.includes('FROM wallet_accounts WHERE public_key')) {
