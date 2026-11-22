@@ -14,7 +14,8 @@ const ACCOUNT_COLUMNS = `
   network,
   status,
   created_at,
-  updated_at
+  updated_at,
+  tenant_id
 `;
 
 export const DEFAULT_SCAN_PAGE_SIZE = 500;
@@ -99,7 +100,8 @@ export function mapWalletAccount(row) {
     network: row.network,
     status: row.status,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id)
   };
 }
 
