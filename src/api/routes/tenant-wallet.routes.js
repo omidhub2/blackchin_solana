@@ -9,7 +9,7 @@ import { getServices } from '../services-context.js';
 import {
   optionalString, parsePositiveId, rejectUnknownKeys, requireBoolean,
   requireObject, requireSafeInteger, requireString, requirePublicKey,
-  requireSolAmount, requireIdempotencyKey
+  requireSolAmount, requireIdempotencyKey, parseListLimit, parseListOffset
 } from '../validation.js';
 import { badRequest } from '../../core/errors.js';
 import { rateLimitHook } from '../middleware/rate-limit.js';
@@ -32,6 +32,8 @@ export async function tenantWalletRoutes(app) {
   const createLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-hd-create', distributed });
   const accountLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'tenant-address-create', distributed });
   const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'tenant-recovery', distributed });
+  const withdrawalEstimateLimiter = rateLimitHook({ limit: 30, windowMs: 60_000, keyPrefix: 'tenant-withdrawal-estimate', distributed });
+  const withdrawalSubmitLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-withdrawal-submit', distributed });
   const appServices = (request) => getServices(app, request);
   const services = (request) => appServices(request).tenantWallets;
   const tenantId = (request) => request.tenant.id;
@@ -120,8 +122,25 @@ export async function tenantWalletRoutes(app) {
     const index = requireSafeInteger(parsed, 'accountIndex', { min: 0, max: 2_147_483_647 });
     return services(request).getAccountAtIndex(tenantId(request), id, index);
   });
+  app.get('/withdrawals', {
+    preHandler: requireTenantScope('withdrawals:read')
+  }, async (request) => appServices(request).tenantWithdrawals.list({
+    tenantId: tenantId(request),
+    limit: parseListLimit(request.query.limit, 20, 100),
+    offset: parseListOffset(request.query.offset)
+  }));
+
+  app.get('/withdrawals/:idempotencyKey', {
+    preHandler: requireTenantScope('withdrawals:read')
+  }, async (request) => appServices(request).tenantWithdrawals.get({
+    tenantId: tenantId(request),
+    idempotencyKey: requireString(request.params.idempotencyKey, 'idempotencyKey', {
+      min: 16, max: 128, pattern: /^[A-Za-z0-9._:-]+$/
+    })
+  }));
+
   app.post('/withdrawals/estimate', {
-    preHandler: requireTenantScope('withdrawals:estimate')
+    preHandler: [requireTenantScope('withdrawals:estimate'), withdrawalEstimateLimiter]
   }, async (request) => {
     const body = requireObject(request.body ?? {}, 'body');
     rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol']);
@@ -134,7 +153,7 @@ export async function tenantWalletRoutes(app) {
   });
 
   app.post('/withdrawals', {
-    preHandler: requireTenantScope('withdrawals:write')
+    preHandler: [requireTenantScope('withdrawals:write'), withdrawalSubmitLimiter]
   }, async (request, reply) => {
     const body = requireObject(request.body ?? {}, 'body');
     rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol', 'approvalReference']);
