@@ -75,6 +75,7 @@ try {
   await pool.query('SELECT bucket_key FROM rate_limit_counters LIMIT 0');
   await pool.query('SELECT last_transaction_id FROM deposit_reconciliation_cursors LIMIT 0');
   await pool.query('SELECT last_id FROM withdrawal_reconciliation_cursors LIMIT 0');
+  await pool.query('SELECT tenant_credential_id, approval_reference FROM api_idempotency_keys LIMIT 0');
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
