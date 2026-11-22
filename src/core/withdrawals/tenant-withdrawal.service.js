@@ -42,6 +42,15 @@ function hashRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalR
     .digest('hex');
 }
 
+function mapWithdrawalRecord(row) {
+  return {
+    idempotencyKey: row.idempotency_key, status: row.status, network: row.network,
+    fromPublicKey: row.wallet_public_key, toPublicKey: row.to_public_key,
+    amountLamports: row.amount_lamports === null ? null : String(row.amount_lamports),
+    signature: row.transaction_signature, approvalReference: row.approval_reference,
+    response: row.response_json ?? null, createdAt: row.created_at, updatedAt: row.updated_at
+  };
+}
 export function createTenantWithdrawalService({ db, rpc, network, commitment, cipher, tenantWithdrawalPolicy = null }) {
   if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
     throw new TypeError('A PostgreSQL database pool is required');
@@ -122,6 +131,37 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
   }
 
   return Object.freeze({
+    async list({ tenantId, limit = 20, offset = 0 } = {}) {
+      tenantId = assertTenantId(tenantId);
+      const result = await db.query(
+        `SELECT idempotency_key, status, network, wallet_public_key, to_public_key,
+                amount_lamports, transaction_signature, approval_reference, response_json,
+                created_at, updated_at
+           FROM api_idempotency_keys
+          WHERE tenant_id = $1 AND operation = 'withdrawal'
+          ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
+        [tenantId, limit, offset]
+      );
+      return { items: result.rows.map(mapWithdrawalRecord), limit, offset };
+    },
+
+    async get({ tenantId, idempotencyKey } = {}) {
+      tenantId = assertTenantId(tenantId);
+      if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+        throw badRequest('Invalid withdrawal idempotency key', 'INVALID_IDEMPOTENCY_KEY');
+      }
+      const result = await db.query(
+        `SELECT idempotency_key, status, network, wallet_public_key, to_public_key,
+                amount_lamports, transaction_signature, approval_reference, response_json,
+                created_at, updated_at
+           FROM api_idempotency_keys
+          WHERE tenant_id = $1 AND operation = 'withdrawal' AND idempotency_key = $2
+          LIMIT 1`,
+        [tenantId, idempotencyKey]
+      );
+      if (!result.rows[0]) throw notFound('Tenant withdrawal was not found', 'WITHDRAWAL_NOT_FOUND');
+      return mapWithdrawalRecord(result.rows[0]);
+    },
     async estimate({ tenantId, fromPublicKey, toPublicKey, amountSol }) {
       tenantId = assertTenantId(tenantId);
       await requireWallet(tenantId, fromPublicKey);
