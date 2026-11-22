@@ -33,10 +33,11 @@ export const MAX_SCAN_ACCOUNTS = 5_000;
 export async function listActiveWatchedWallets(db, network, { hdWalletId = null, limit = MAX_SCAN_ACCOUNTS } = {}) {
   const result = await db.query(
     `
-      SELECT account.public_key, account.hd_wallet_id
+      SELECT account.public_key, account.hd_wallet_id, account.tenant_id
       FROM wallet_accounts AS account
       INNER JOIN hd_wallets AS root
         ON root.id = account.hd_wallet_id
+       AND root.tenant_id IS NOT DISTINCT FROM account.tenant_id
        AND root.status = 'active'
       WHERE account.network = $1
         AND account.status = 'active'
@@ -49,7 +50,8 @@ export async function listActiveWatchedWallets(db, network, { hdWalletId = null,
 
   return result.rows.map((row) => ({
     publicKey: row.public_key,
-    hdWalletId: String(row.hd_wallet_id)
+    hdWalletId: String(row.hd_wallet_id),
+    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id)
   }));
 }
 
@@ -65,7 +67,7 @@ export async function listActiveWatchedWallets(db, network, { hdWalletId = null,
 export async function listStandaloneWatchedWallets(db, { limit = MAX_SCAN_ACCOUNTS } = {}) {
   const result = await db.query(
     `
-      SELECT public_key
+      SELECT public_key, tenant_id
       FROM wallets
       ORDER BY created_at ASC, id ASC
       LIMIT $1
@@ -75,7 +77,8 @@ export async function listStandaloneWatchedWallets(db, { limit = MAX_SCAN_ACCOUN
 
   return result.rows.map((row) => ({
     publicKey: row.public_key,
-    hdWalletId: null
+    hdWalletId: null,
+    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id)
   }));
 }
 
