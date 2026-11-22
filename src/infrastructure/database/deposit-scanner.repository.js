@@ -1,9 +1,9 @@
 /**
  * Persistent cursor state for the native SOL deposit scanner.
  *
- * One row per (network, scope). `scope` identifies what is watched, e.g.
- * `all` (every HD child + standalone wallet on that network) or
- * `hd:<id>` for a single root.
+ * One row per (network, scope). Active scanner runs use address-scoped
+ * cursors so each Solana address has an independent signature history position.
+ * Aggregate scopes remain valid for compatibility.
  */
 import crypto from 'node:crypto';
 
@@ -21,7 +21,7 @@ const CURSOR_COLUMNS = `
   updated_at
 `;
 
-const SCOPE_PATTERN = /^(?:all|hd:\d+|account:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+const SCOPE_PATTERN = /^(?:all|hd:\d+|account:[1-9A-HJ-NP-Za-km-z]{32,44}|address:[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 
 export function assertScope(scope) {
   if (typeof scope !== 'string' || !SCOPE_PATTERN.test(scope)) {
