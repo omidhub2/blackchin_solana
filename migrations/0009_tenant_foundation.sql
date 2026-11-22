@@ -103,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_outbox_tenant_status
 
 -- For HD-derived records, the tenant must match the parent root. NULL tenant
 -- values remain valid only for legacy/unassigned rows during migration.
-DO $
+DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
@@ -127,7 +127,7 @@ BEGIN
             ON DELETE RESTRICT;
     END IF;
 END;
-$;
+$$;;
 
 -- When a tenant is assigned to a record, its ownership binding cannot be
 -- silently changed later. NULL -> tenant assignment remains possible for a
