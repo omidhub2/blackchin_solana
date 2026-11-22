@@ -289,14 +289,14 @@ export function createWithdrawalReconciliationService({
           throw new Error('Existing withdrawal ledger record conflicts with finalized chain evidence');
         }
         if (existing.status !== 'credited') {
-          await updateTransactionStatus(client, existing.id, {
-            status: 'credited',
-            commitment: 'finalized',
+          const updateInput = {
+            status: 'credited', commitment: 'finalized',
             slot: parsed.slot ?? status.slot ?? null,
             blockTime: parsed.blockTime ? new Date(parsed.blockTime * 1000) : null,
-            clearFailureReason: true,
-            metadata: { reconciliation: 'finalized_success' }
-          });
+            clearFailureReason: true, metadata: { reconciliation: 'finalized_success' }
+          };
+          if (candidate.tenant_id == null) await updateTransactionStatus(client, existing.id, updateInput);
+          else await updateTransactionStatusForTenant(client, candidate.tenant_id, existing.id, updateInput);
         }
       } else {
         await insertBlockchainTransaction(client, {
@@ -382,6 +382,7 @@ export function createWithdrawalReconciliationService({
           metrics.lastError = error.message;
           await assertCurrentOwnership();
           await repository.recordWithdrawalReconciliationEvent(db, {
+            tenantId: candidate.tenant_id ?? null,
             idempotencyKey: candidate.idempotency_key,
             network,
             signature: candidate.transaction_signature,
