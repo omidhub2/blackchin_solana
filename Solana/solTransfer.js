@@ -109,9 +109,12 @@ export function extractIncomingTransfers(parsedTransaction, recipientAddress) {
   const instructions = [...topLevel, ...inner];
 
   return instructions
+    // Parsed inner instructions may be "unknown" and lack `program`/`parsed`.
     .filter((instruction) =>
       instruction?.program === 'system' &&
-      instruction?.parsed?.type === 'transfer'
+      instruction?.parsed?.type === 'transfer' &&
+      instruction?.parsed?.info &&
+      typeof instruction.parsed.info === 'object'
     )
     .map((instruction) => instruction.parsed.info)
     .filter((info) =>
@@ -129,7 +132,7 @@ export function extractIncomingTransfers(parsedTransaction, recipientAddress) {
     }));
 }
 
-async function getStoredWalletPublicKey(publicKey) {
+async function queryStoredWalletPublicKey(publicKey) {
   const { pool } = await import('../PostgreSQL/walletStorage.js');
 
   const result = await pool.query(
@@ -142,6 +145,87 @@ async function getStoredWalletPublicKey(publicKey) {
   }
 
   return result.rows[0].public_key;
+}
+
+async function getStoredWalletPublicKey(publicKey) {
+  try {
+    return await queryStoredWalletPublicKey(publicKey);
+  } catch (error) {
+    if (error.message === 'Wallet address was not found in the local wallet database') {
+      error.statusCode = 404;
+    }
+
+    throw error;
+  }
+}
+
+// web3.js silently swallows polling errors for HTTP-only endpoints and keeps
+// retrying forever, so the valid blockhash window is enforced here instead of
+// leaving a submitted transfer pending without an answer.
+const MAX_BLOCKHASH_WAIT_MS = 90_000;
+const BLOCKHASH_WINDOW_CHECK_MS = 2_000;
+
+async function confirmWithBlockhashWindow({
+  signature,
+  latestBlockhash,
+  commitmentLevel
+}) {
+  let blockHeightTimer;
+  let settled = false;
+
+  const expired = new Promise((_resolve, reject) => {
+    blockHeightTimer = setInterval(async () => {
+      if (settled) return;
+
+      try {
+        const { value: blockHeight } = await connection.getBlockHeight(commitmentLevel);
+
+        if (
+          Number.isSafeInteger(blockHeight) &&
+          blockHeight > latestBlockhash.lastValidBlockHeight
+        ) {
+          const error = new Error(
+            `Transaction ${signature} was not confirmed before its blockhash expired`
+          );
+          error.signature = signature;
+          reject(error);
+        }
+      } catch {
+        // Transient RPC errors are ignored while the blockhash is still valid.
+      }
+    }, BLOCKHASH_WINDOW_CHECK_MS);
+    blockHeightTimer.unref?.();
+  });
+
+  const timeout = new Promise((_resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new Error(
+        `Transaction ${signature} confirmation exceeded ${MAX_BLOCKHASH_WAIT_MS} ms`
+      );
+      error.signature = signature;
+      reject(error);
+    }, MAX_BLOCKHASH_WAIT_MS);
+    timer.unref?.();
+  });
+
+  const confirmation = connection.confirmTransaction(
+    {
+      signature,
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+    },
+    commitmentLevel
+  );
+
+  // Avoid unhandled rejections if the race settles through another branch.
+  confirmation.catch(() => {});
+
+  try {
+    return await Promise.race([confirmation, expired, timeout]);
+  } finally {
+    settled = true;
+    clearInterval(blockHeightTimer);
+  }
 }
 
 /**
@@ -459,14 +543,11 @@ export async function sendSol({
     let confirmation;
 
     try {
-      confirmation = await connection.confirmTransaction(
-        {
-          signature,
-          blockhash: latestBlockhash.blockhash,
-          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-        },
+      confirmation = await confirmWithBlockhashWindow({
+        signature,
+        latestBlockhash,
         commitmentLevel
-      );
+      });
     } catch (error) {
       error.signature = signature;
       error.message = `Transaction was submitted but confirmation could not be completed. Check signature ${signature}. ${error.message}`;
@@ -528,15 +609,8 @@ export async function estimateSolTransfer({
     throw new Error('Sending SOL to the same wallet is not allowed');
   }
 
-  const { pool } = await import('../PostgreSQL/walletStorage.js');
-  const walletResult = await pool.query(
-    'SELECT public_key FROM wallets WHERE public_key = $1 LIMIT 1',
-    [sender.toBase58()]
-  );
-
-  if (walletResult.rowCount === 0) {
-    throw new Error('Sender wallet was not found in the wallet database');
-  }
+  // Throws (404) when the sender is not a wallet stored in this service.
+  await getStoredWalletPublicKey(sender.toBase58());
 
   const latestBlockhash = await connection.getLatestBlockhash(commitmentLevel);
   const transaction = new Transaction({
@@ -584,3 +658,128 @@ export async function estimateSolTransfer({
   };
 }
 
+
+/**
+ * Send native SOL with an externally supplied signing keypair.
+ *
+ * Used by the HD withdrawal flow: the caller (wallet-signer) derives or
+ * decrypts the correct child key for the lifetime of the signing callback and
+ * passes the keypair here. This function never loads keys from the database
+ * and never logs them.
+ *
+ * The keypair returned by `getKeypair()` is owned by the caller; this function
+ * does not zero it.
+ *
+ * @param {{
+ *   fromPublicKey: string,
+ *   toPublicKey: string,
+ *   amountSol: string,
+ *   getKeypair: () => import('@solana/web3.js').Keypair,
+ *   commitment?: 'processed'|'confirmed'|'finalized'
+ * }} options
+ */
+export async function sendSolWithSigner({
+  fromPublicKey,
+  toPublicKey,
+  amountSol,
+  getKeypair,
+  commitment: requestedCommitment = defaultCommitment
+}) {
+  if (typeof getKeypair !== 'function') {
+    throw new TypeError('A signing key provider is required');
+  }
+
+  const senderAddress = parsePublicKey(fromPublicKey, 'fromPublicKey');
+  const recipientAddress = parsePublicKey(toPublicKey, 'toPublicKey');
+  const commitmentLevel = validateCommitment(requestedCommitment);
+  const amountLamports = parseSolToLamports(amountSol);
+
+  if (senderAddress.equals(recipientAddress)) {
+    throw new Error('Sending SOL to the same wallet is not allowed');
+  }
+
+  const senderKeypair = getKeypair();
+
+  if (!senderKeypair?.publicKey?.equals?.(senderAddress)) {
+    throw new Error('Signing key does not match the sender address');
+  }
+
+  const latestBlockhash = await connection.getLatestBlockhash(commitmentLevel);
+  const transaction = new Transaction({
+    feePayer: senderAddress,
+    recentBlockhash: latestBlockhash.blockhash
+  }).add(
+    SystemProgram.transfer({
+      fromPubkey: senderAddress,
+      toPubkey: recipientAddress,
+      lamports: Number(amountLamports)
+    })
+  );
+
+  const feeLamports = await connection.getFeeForMessage(
+    transaction.compileMessage(),
+    commitmentLevel
+  );
+
+  if (!Number.isSafeInteger(feeLamports) || feeLamports < 0) {
+    throw new Error('Unable to obtain a valid transaction fee estimate');
+  }
+
+  const balanceLamports = await connection.getBalance(senderAddress, commitmentLevel);
+
+  if (!Number.isSafeInteger(balanceLamports) || balanceLamports < 0) {
+    throw new Error('RPC returned an invalid sender balance');
+  }
+
+  const requiredLamports = amountLamports + BigInt(feeLamports);
+
+  if (BigInt(balanceLamports) < requiredLamports) {
+    throw new Error(
+      `Insufficient SOL: required ${formatLamports(requiredLamports)} SOL including estimated fee, available ${formatLamports(balanceLamports)} SOL`
+    );
+  }
+
+  transaction.sign(senderKeypair);
+
+  const rawTransaction = transaction.serialize();
+  const signature = await connection.sendRawTransaction(rawTransaction, {
+    skipPreflight: false,
+    preflightCommitment: commitmentLevel,
+    maxRetries: 3
+  });
+
+  let confirmation;
+
+  try {
+    confirmation = await confirmWithBlockhashWindow({
+      signature,
+      latestBlockhash,
+      commitmentLevel
+    });
+  } catch (error) {
+    error.signature = signature;
+    error.message = `Transaction was submitted but confirmation could not be completed. Check signature ${signature}. ${error.message}`;
+    throw error;
+  }
+
+  if (confirmation.value.err) {
+    const error = new Error('Solana rejected the transaction during confirmation');
+    error.signature = signature;
+    error.transactionError = confirmation.value.err;
+    throw error;
+  }
+
+  return {
+    sent: true,
+    signature,
+    network: solanaNetwork,
+    from: senderAddress.toBase58(),
+    to: recipientAddress.toBase58(),
+    amountLamports: amountLamports.toString(),
+    amountSol: formatLamports(amountLamports),
+    feeLamports: String(feeLamports),
+    feeSol: formatLamports(feeLamports),
+    slot: confirmation.context.slot,
+    confirmationStatus: commitmentLevel
+  };
+}

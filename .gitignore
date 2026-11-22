@@ -21,3 +21,5 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/*
 !.vscode/extensions.json
+
+package.local-backup.json

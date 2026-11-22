@@ -116,3 +116,42 @@ test('failed or missing transaction metadata produces no incoming transfers', ()
     []
   );
 });
+
+test('unparsed inner instructions do not crash transfer extraction', () => {
+  const recipient = '11111111111111111111111111111111';
+  const sender = 'Vote111111111111111111111111111111111111111';
+
+  const transfers = extractIncomingTransfers(
+    {
+      transaction: {
+        message: {
+          instructions: [
+            {
+              program: 'system',
+              parsed: {
+                type: 'transfer',
+                info: { source: sender, destination: recipient, lamports: 1000000000 }
+              }
+            }
+          ]
+        }
+      },
+      meta: {
+        err: null,
+        innerInstructions: [
+          {
+            index: 0,
+            instructions: [
+              { program: 'spl-token', parsed: null },
+              { programId: 'ComputeBudget111111111111111111111111111111', stackHeight: 2 }
+            ]
+          }
+        ]
+      }
+    },
+    recipient
+  );
+
+  assert.equal(transfers.length, 1);
+  assert.equal(transfers[0].amountSol, '1');
+});

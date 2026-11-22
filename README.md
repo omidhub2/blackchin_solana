@@ -1,176 +1,148 @@
 # Blackchin Solana Wallet Engine
 
-A Solana wallet core with encrypted PostgreSQL storage and a Fastify REST API.
+Custodial Solana wallet core with **HD (hierarchical deterministic) wallets**,
+encrypted PostgreSQL storage and a Fastify REST API.
+
+## What it does
+
+- **Legacy standalone wallets** — `Keypair.generate()`, stored encrypted
+  (unchanged behaviour and endpoints).
+- **HD roots** — a BIP39 (24-word) mnemonic per root, encrypted with
+  AES-256-GCM; children derived with SLIP-0010 Ed25519 at
+  `m/44'/501'/{accountIndex}'/0'`.
+- **Concurrency-safe child creation** — up to 50 accounts per request, indexes
+  allocated under a row lock with unique constraints as the final guard.
+- **Native SOL operations** for both wallet types: balance (single + aggregate),
+  deposit address, incoming transaction verification and idempotent deposit
+  recording, fee estimation, and approved withdrawals with an immutable ledger.
+- **No private keys or mnemonics in normal API responses.** The recovery phrase
+  is available exactly once through a purpose-bound one-time token.
+
+SPL tokens are **not** supported; only native SOL is implemented and tested.
 
 ## Architecture
 
-- `src/core`: framework-independent wallet, balance, receive and transfer use cases.
-- `src/blockchain/solana`: Solana adapter.
-- `src/infrastructure/database`: PostgreSQL repositories.
-- `src/api`: Fastify HTTP server, routes and API-key authentication.
-- `PostgreSQL/` and `Solana/`: existing storage and chain implementations retained during the incremental migration.
-- `scripts/migrate.js`: versioned PostgreSQL migration runner.
-- `migrations/`: ordered, immutable SQL migrations.
-- `test/`: automated tests.
+```
+src/api                  Fastify server, routes, API-key auth, rate limits, validation
+src/core                 use cases: hd-wallets, wallets (children), balance,
+                         deposits, withdrawals, transactions, standalone wallets
+src/blockchain/solana    adapter + hd/ (BIP39, SLIP-0010, derivation)
+src/infrastructure       PostgreSQL repositories, encryption, signer, wiring
+PostgreSQL/ Solana/      pre-existing storage and chain implementations (kept)
+config/                  Solana connection (commitment, RPC/WS endpoints)
+migrations/              ordered SQL migrations (0001-0003)
+scripts/migrate.js       versioned migration runner
+```
 
-## Requirements and configuration
+Details: [`docs/HD_WALLET_ARCHITECTURE.md`](docs/HD_WALLET_ARCHITECTURE.md).
+
+## Requirements
 
 - Node.js 20+
-- PostgreSQL
-- Solana RPC endpoint
-- Local `.env`
+- PostgreSQL 13+
+- A Solana RPC endpoint (devnet by default)
 
-Copy `.env.example` to `.env` and fill in the real values. Never commit `.env`.
-
-## Install
+## Install and configure
 
 ```bash
 npm install
+cp .env.example .env      # then fill in DATABASE_URL, ENCRYPTION_KEY, API_ACCESS_KEY
 ```
 
-## Database migrations
-
-All schema changes are managed through the migration runner. Do not execute migration files manually after adopting this system.
-
-Check migration status:
-
-```bash
-npm run db:migrate:status
-```
-
-Apply all pending migrations:
-
-```bash
-npm run db:migrate
-```
-
-The runner:
-
-- Discovers files matching `NNNN_description.sql` in `migrations/`.
-- Applies migrations in numeric version order.
-- Creates `schema_migrations` automatically.
-- Records each migration's version, filename, SHA-256 checksum and applied timestamp.
-- Uses a PostgreSQL advisory lock so two application instances cannot run migrations concurrently.
-- Executes each migration and its history insert in one transaction.
-- Stops if an applied migration is edited, renamed or removed (checksum/history drift).
-- Never performs automatic rollback or destructive schema changes.
-
-### Existing databases
-
-The baseline migration `0001_wallets.sql` creates the encrypted wallets table and indexes if they do not already exist. The existing `0002_api_idempotency.sql` creates the API idempotency table if it does not already exist.
-
-If you previously created these tables manually, running the migration is safe for these two migrations because their DDL uses `IF NOT EXISTS`. The runner will then record them in `schema_migrations`.
-
-**Important:** back up production data before applying schema changes. Review every new migration before running it against production. Never modify a migration that has already been applied; create a new numbered migration instead.
-
-### Adding a migration
-
-Create the next unused version, for example:
-
-`migrations/0003_add_transaction_ledger.sql`
-
-Write forward-only SQL, review it, then run:
+## Migrations
 
 ```bash
 npm run db:migrate:status
 npm run db:migrate
 ```
 
-Do not reuse a version number. Do not edit an applied migration. Do not put secrets in migration files.
+Migration `0003_hd_wallets.sql` is additive: existing wallets are preserved and
+are **not** converted into HD children. Back up the database first.
 
-## Start the API
-
-Run migrations before starting the API:
+## Run
 
 ```bash
-npm run db:migrate
 npm run api:start
+curl http://127.0.0.1:3000/health
 ```
 
-By default the API binds to `127.0.0.1`. Set `API_HOST=0.0.0.0` only behind a trusted network boundary and TLS-terminating reverse proxy.
+## API at a glance
 
-## Authentication
-
-All routes except `GET /health` require the `X-API-Key` header. The API refuses to start unless `API_ACCESS_KEY` is configured with at least 32 characters.
-
-This is a single-service API key boundary, not multi-tenant end-user authentication. Do not expose it directly to browsers or the public internet. A production multi-tenant deployment must replace this with tenant-scoped JWT/OAuth authentication and database-level tenant isolation before serving multiple customers.
-
-## REST API
-
-Base path: `/api/v1`
+Base path `/api/v1`, `X-API-Key` required on every route except `/health`.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/wallets` | Create a wallet; returns metadata only |
-| GET | `/wallets/:publicKey` | Read wallet metadata |
-| GET | `/wallets/:publicKey/balance` | Read native SOL balance |
-| GET | `/wallets/:publicKey/deposit-address` | Return deposit address |
-| GET | `/wallets/:publicKey/transactions?limit=10` | Recent incoming native SOL transfers |
-| GET | `/transfers/:signature?publicKey=...` | Verify an incoming transfer |
-| POST | `/transfers/estimate` | Estimate fee and balance without broadcasting |
-| POST | `/transfers` | Submit an approved native SOL transfer |
+| POST | `/hd-wallets` | create an HD root (returns one-time recovery token) |
+| GET | `/hd-wallets/:id` | root metadata |
+| PATCH | `/hd-wallets/:id` | change root status |
+| POST | `/hd-wallets/:id/recovery-phrase/consume` | one-time phrase provisioning |
+| GET | `/hd-wallets/:id/derive/:accountIndex` | deterministic address recovery check |
+| GET/POST | `/hd-wallets/:id/accounts` | list / create child wallets |
+| POST | `/hd-wallets/:id/accounts/batch` | batch child creation |
+| GET | `/hd-wallets/:id/accounts/:accountIndex` | child by derivation index |
+| GET | `/hd-wallets/:id/balance` | aggregate child balance |
+| GET | `/hd-wallets/:id/transactions` | deposits + withdrawals |
+| POST | `/wallets` | standalone wallet (legacy) |
+| GET | `/wallets/:publicKey` | wallet metadata (standalone or child) |
+| GET | `/wallets/:publicKey/balance` | single wallet balance |
+| GET | `/wallets/:publicKey/deposit-address` | deposit address |
+| GET | `/wallets/:publicKey/transactions` | live incoming SOL scan |
+| GET | `/wallets/:publicKey/deposits` `/withdrawals` | recorded ledger |
+| GET | `/transfers/:signature?publicKey=` | verify an incoming transfer |
+| POST | `/transfers/:signature/confirm` | verify + record a deposit (idempotent) |
+| GET | `/deposits/:signature?publicKey=` | refresh deposit confirmation |
+| POST | `/transfers/estimate` | fee/balance preview |
+| POST | `/transfers` | approved withdrawal (Idempotency-Key required) |
 
-Every endpoint except `/health` requires `X-API-Key: <API_ACCESS_KEY>`.
+Full reference: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
 
-### Estimate a transfer
+### Quick start on devnet
 
-```http
-POST /api/v1/transfers/estimate
-X-API-Key: <API_ACCESS_KEY>
-Content-Type: application/json
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/v1/hd-wallets \
+  -H "X-API-Key: $API_ACCESS_KEY" -H 'content-type: application/json' \
+  -d '{"label":"treasury"}'
 
-{
-  "fromPublicKey": "<stored-wallet-public-key>",
-  "toPublicKey": "<recipient-public-key>",
-  "amountSol": "0.1"
-}
+curl -s -X POST http://127.0.0.1:3000/api/v1/hd-wallets/1/accounts/batch \
+  -H "X-API-Key: $API_ACCESS_KEY" -H 'content-type: application/json' \
+  -d '{"count":3}'
+
+curl -s http://127.0.0.1:3000/api/v1/hd-wallets/1/balance \
+  -H "X-API-Key: $API_ACCESS_KEY"
 ```
 
-### Submit a transfer
+## Security posture
 
-The caller must explicitly set `approved: true` after presenting the estimate to an authorized operator/user. An idempotency key is mandatory. Reusing the same key with a different request is rejected. A request left in `processing` after a crash is not automatically rebroadcast.
+- AES-256-GCM for every stored secret, AAD-bound to the record, key-versioned
+  for rotation.
+- Withdrawals need the API key, `approved: true`, and a fresh idempotency key;
+  a crashed/uncertain broadcast is never replayed automatically.
+- Deposits are recorded once per `(signature, wallet, direction)`.
+- The API key authenticates **one trusted backend**, not end users. Do not expose
+  the service publicly without tenant authentication. See
+  [`docs/SECURITY.md`](docs/SECURITY.md).
 
-```http
-POST /api/v1/transfers
-X-API-Key: <API_ACCESS_KEY>
-Idempotency-Key: <unique-random-request-id>
-Content-Type: application/json
+## Documentation
 
-{
-  "fromPublicKey": "<stored-wallet-public-key>",
-  "toPublicKey": "<recipient-public-key>",
-  "amountSol": "0.1",
-  "approved": true
-}
-```
-
-**Important:** This endpoint broadcasts a real blockchain transaction after approval. Test with Devnet first. Never use a funded mainnet wallet during development.
-
-## Security boundaries
-
-- Private keys are never returned by REST endpoints.
-- Private keys are decrypted only inside the signing path and are not logged.
-- Transfer amounts are decimal strings and converted to integer lamports without floating-point arithmetic.
-- API authentication fails closed when no API key is configured.
-- Idempotency reservations prevent automatic duplicate submission after retries/crashes; stuck `processing` rows require reconciliation.
-- The current API-key middleware is for a single trusted backend service. It is not a substitute for tenant/user auth or a production secrets manager.
+- [`docs/HD_WALLET_ARCHITECTURE.md`](docs/HD_WALLET_ARCHITECTURE.md) — derivation scheme, recovery, signing
+- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — endpoints and error codes
+- [`docs/SECURITY.md`](docs/SECURITY.md) — custody model, encryption, threat model
+- [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md) — tables, constraints, migrations
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — install, deploy, backup, reconciliation, troubleshooting
 
 ## Tests
 
-Migration runner tests (no database or blockchain transaction required):
-
 ```bash
-npm run test:migrations
-```
-
-Solana transfer unit tests:
-
-```bash
+npm run test:unit       # no database, no blockchain
+npm run test:hd         # HD crypto + services
+npm run test:api        # HTTP contracts
 npm run test:solana
+npm run test:migrations
+npm run check:imports
+npm run test:wallet     # requires PostgreSQL
 ```
 
-Wallet storage integration tests require a configured PostgreSQL database:
+## Legacy CLIs
 
-```bash
-npm run test:wallet
-```
+`npm run wallet:create`, `npm run sol:receive`, `npm run sol:send` and
+`node PostgreSQL/show-wallet.js` still operate on standalone wallets.

@@ -1,46 +1,59 @@
+/**
+ * Native SOL transfer routes (fee estimate and approved withdrawal).
+ *
+ * Preserved request/response contract:
+ *   POST /api/v1/transfers/estimate  { fromPublicKey, toPublicKey, amountSol }
+ *   POST /api/v1/transfers           + Idempotency-Key header + approved: true
+ */
+import { badRequest } from '../../core/errors.js';
+import { rateLimitHook } from '../middleware/rate-limit.js';
+import { getServices } from '../services-context.js';
 import {
-  estimateTransfer,
-  submitTransfer
-} from '../../core/transactions/transfer.service.js';
+  rejectUnknownKeys,
+  requireBoolean,
+  requireIdempotencyKey,
+  requireObject,
+  requirePublicKey,
+  requireSolAmount
+} from '../validation.js';
+
+const ESTIMATE_FIELDS = ['fromPublicKey', 'toPublicKey', 'amountSol'];
+const TRANSFER_FIELDS = ['fromPublicKey', 'toPublicKey', 'amountSol', 'approved'];
 
 export async function transferRoutes(app) {
-  app.post('/api/v1/transfers/estimate', async (request, reply) => {
-    const { fromPublicKey, toPublicKey, amountSol } = request.body ?? {};
+  const services = (request) => getServices(app, request);
 
-    if (
-      typeof fromPublicKey !== 'string' ||
-      typeof toPublicKey !== 'string' ||
-      typeof amountSol !== 'string'
-    ) {
-      return reply.code(400).send({
-        error: 'INVALID_REQUEST',
-        message: 'fromPublicKey, toPublicKey and decimal-string amountSol are required'
-      });
-    }
+  const estimateLimiter = rateLimitHook({ limit: 60, windowMs: 60_000, keyPrefix: 'tx-estimate' });
+  const submitLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tx-submit' });
 
-    return estimateTransfer({ fromPublicKey, toPublicKey, amountSol });
+  app.post('/api/v1/transfers/estimate', { preHandler: estimateLimiter }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ESTIMATE_FIELDS);
+
+    return services(request).withdrawals.estimate({
+      fromPublicKey: requirePublicKey(body.fromPublicKey, 'fromPublicKey'),
+      toPublicKey: requirePublicKey(body.toPublicKey, 'toPublicKey'),
+      amountSol: requireSolAmount(body.amountSol, 'amountSol')
+    });
   });
 
-  app.post('/api/v1/transfers', async (request, reply) => {
-    const { fromPublicKey, toPublicKey, amountSol, approved } = request.body ?? {};
+  app.post('/api/v1/transfers', { preHandler: submitLimiter }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, TRANSFER_FIELDS);
 
-    if (
-      typeof fromPublicKey !== 'string' ||
-      typeof toPublicKey !== 'string' ||
-      typeof amountSol !== 'string'
-    ) {
-      return reply.code(400).send({
-        error: 'INVALID_REQUEST',
-        message: 'fromPublicKey, toPublicKey and decimal-string amountSol are required'
-      });
+    if (body.approved !== true) {
+      throw badRequest(
+        'The caller must explicitly approve the transfer by setting approved: true',
+        'APPROVAL_REQUIRED'
+      );
     }
 
-    const result = await submitTransfer({
-      idempotencyKey: request.headers['idempotency-key'],
-      fromPublicKey,
-      toPublicKey,
-      amountSol,
-      approved
+    const result = await services(request).withdrawals.submit({
+      idempotencyKey: requireIdempotencyKey(request.headers['idempotency-key']),
+      fromPublicKey: requirePublicKey(body.fromPublicKey, 'fromPublicKey'),
+      toPublicKey: requirePublicKey(body.toPublicKey, 'toPublicKey'),
+      amountSol: requireSolAmount(body.amountSol, 'amountSol'),
+      approved: requireBoolean(body.approved, 'approved')
     });
 
     return reply.code(result.replayed ? 200 : 201).send(result);

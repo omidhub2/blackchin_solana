@@ -86,8 +86,10 @@ export async function submitTransfer({
     throw error;
   }
 
+  let result;
+
   try {
-    const result = await solanaAdapter.sendSol({
+    result = await solanaAdapter.sendSol({
       fromPublicKey,
       toPublicKey,
       amountSol,
@@ -95,18 +97,9 @@ export async function submitTransfer({
       // exact request body; the idempotency reservation prevents replay.
       confirm: async () => true
     });
-
-    await pool.query(
-      `
-        UPDATE api_idempotency_keys
-        SET status = 'completed', response_json = $2::jsonb, updated_at = NOW()
-        WHERE idempotency_key = $1
-      `,
-      [idempotencyKey, JSON.stringify(result)]
-    );
-
-    return result;
   } catch (error) {
+    // No transaction was broadcast (validation, wallet lookup, fee/balance
+    // checks or the RPC node rejected it before submission). Safe to fail.
     await pool.query(
       `
         UPDATE api_idempotency_keys
@@ -118,4 +111,27 @@ export async function submitTransfer({
 
     throw error;
   }
+
+  try {
+    await pool.query(
+      `
+        UPDATE api_idempotency_keys
+        SET status = 'completed', response_json = $2::jsonb, updated_at = NOW()
+        WHERE idempotency_key = $1
+      `,
+      [idempotencyKey, JSON.stringify(result)]
+    );
+  } catch (error) {
+    // The signature was already broadcast. The row intentionally stays in
+    // 'processing' (not 'failed') so an operator reconciles it instead of
+    // retrying with a new key and risking a double send. Return the real
+    // result to the caller anyway.
+    console.error('[IDEMPOTENCY COMPLETION FAILURE]', {
+      idempotencyKey,
+      signature: result.signature,
+      message: error.message
+    });
+  }
+
+  return result;
 }
