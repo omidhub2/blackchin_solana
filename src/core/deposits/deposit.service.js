@@ -12,10 +12,15 @@ import { AppError, conflict, notFound, serviceUnavailable } from '../errors.js';
 import {
   TRANSACTION_STATUSES,
   findTransactionBySignature,
+  findTransactionBySignatureForTenant,
+  findDepositBySignatureForTenant,
+  listDepositsForTenant,
   insertBlockchainTransaction,
-  updateTransactionStatus
+  updateTransactionStatus,
+  updateTransactionStatusForTenant
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
 import { resolveWallet } from '../../infrastructure/security/wallet-signer.js';
+import { resolveDepositWalletForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
 
 const COMMITMENT_RANK = { detected: 1, confirming: 2, confirmed: 3, credited: 4 };
 
@@ -38,6 +43,17 @@ function toRpcError(error) {
 }
 
 export function createDepositService({ db, rpc, network, commitment }) {
+  async function resolveDepositWallet(publicKey, tenantId = null) {
+    return tenantId === null || tenantId === undefined
+      ? resolveWallet(db, publicKey)
+      : resolveDepositWalletForTenant(db, tenantId, publicKey);
+  }
+
+  async function findDeposit(signature, publicKey, tenantId = null) {
+    return tenantId === null || tenantId === undefined
+      ? findTransactionBySignature(db, signature, publicKey, 'deposit')
+      : findTransactionBySignatureForTenant(db, tenantId, signature, publicKey, 'deposit');
+  }
   async function getParsed(signature) {
     try {
       return await rpc.getParsedTransaction(signature, commitment);
@@ -58,8 +74,8 @@ export function createDepositService({ db, rpc, network, commitment }) {
   /**
    * Build the verification view without writing anything.
    */
-  async function inspect(signature, publicKey) {
-    const wallet = await resolveWallet(db, publicKey);
+  async function inspect(signature, publicKey, tenantId = null) {
+    const wallet = await resolveDepositWallet(publicKey, tenantId);
 
     if (!wallet) {
       throw notFound(
@@ -145,7 +161,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
      * Return deposit address metadata for a wallet.
      */
     async getDepositAddress(publicKey) {
-      const wallet = await resolveWallet(db, publicKey);
+      const wallet = await resolveDepositWallet(publicKey, tenantId);
 
       if (!wallet) {
         throw notFound(
@@ -168,8 +184,8 @@ export function createDepositService({ db, rpc, network, commitment }) {
     /**
      * Cheap existence check used by the scanner before any RPC call.
      */
-    async isRecorded(signature, publicKey) {
-      const existing = await findTransactionBySignature(db, signature, publicKey, 'deposit');
+    async isRecorded(signature, publicKey, tenantId = null) {
+      const existing = await findDeposit(signature, publicKey, tenantId);
       return existing !== null;
     },
 
@@ -183,6 +199,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
     async recordVerifiedDeposit({
       signature,
       publicKey,
+      tenantId = null,
       hdWalletId = null,
       from = null,
       lamports,
@@ -258,6 +275,10 @@ export function createDepositService({ db, rpc, network, commitment }) {
         throw conflict('HD wallet ownership does not match the destination wallet', 'WALLET_OWNERSHIP_MISMATCH');
       }
 
+      if (tenantId !== null && tenantId !== undefined && String(wallet.tenantId) !== String(tenantId)) {
+        throw notFound('Deposit address was not found for this tenant', 'WALLET_NOT_FOUND');
+      }
+
       return insertBlockchainTransaction(db, {
         signature,
         direction: 'deposit',
@@ -270,6 +291,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
         status,
         slot,
         blockTime,
+        tenantId: tenantId === null ? null : String(tenantId),
         metadata: {
           transfers,
           fingerprint,
@@ -378,17 +400,26 @@ export function createDepositService({ db, rpc, network, commitment }) {
       return { deposit: inserted.transaction, created: true, status: recordedStatus };
     },
 
+    async listForTenant(tenantId, { limit = 20, offset = 0 } = {}) {
+      return listDepositsForTenant(db, tenantId, { limit, offset });
+    },
+
+    async getForTenant(tenantId, signature) {
+      const deposit = await findDepositBySignatureForTenant(db, tenantId, signature);
+      if (!deposit) throw notFound('Deposit record was not found', 'DEPOSIT_NOT_FOUND');
+      return deposit;
+    },
     /**
      * Advance confirmation for an existing deposit record.
      */
-    async refreshDeposit(signature, publicKey) {
-      const existing = await findTransactionBySignature(db, signature, publicKey, 'deposit');
+    async refreshDeposit(signature, publicKey, tenantId = null) {
+      const existing = await findDeposit(signature, publicKey, tenantId);
 
       if (!existing) {
         throw notFound('Deposit record was not found', 'DEPOSIT_NOT_FOUND');
       }
 
-      const view = await inspect(signature, publicKey);
+      const view = await inspect(signature, publicKey, tenantId);
       const previouslyConfirmed = ['confirmed', 'credited'].includes(existing.status);
       const finalityRegression = existing.status === 'credited' && view.status !== 'credited';
       const confirmationRegression = existing.status === 'confirmed' &&
@@ -409,7 +440,10 @@ export function createDepositService({ db, rpc, network, commitment }) {
         return existing;
       }
 
-      return updateTransactionStatus(db, existing.id, {
+      const updateStatus = tenantId === null || tenantId === undefined
+        ? updateTransactionStatus
+        : (executor, id, input) => updateTransactionStatusForTenant(executor, tenantId, id, input);
+      return updateStatus(db, existing.id, {
         status: nextStatus,
         commitment,
         slot: view.slot,
