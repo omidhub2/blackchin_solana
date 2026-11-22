@@ -22,14 +22,15 @@ export async function listWithdrawalReconciliationCandidates(db, network, afterI
        FROM api_idempotency_keys
       WHERE operation = 'withdrawal'
         AND status = 'processing'
-        AND id > $1
+        AND network = $1
+        AND id > $2
         AND (
           transaction_signature IS NOT NULL
           OR (transaction_signature IS NULL AND created_at <= NOW() - INTERVAL '5 minutes')
         )
       ORDER BY id ASC
-      LIMIT $2`,
-    [afterId, limit]
+      LIMIT $3`,
+    [network, afterId, limit]
   );
   return result.rows;
 }
