@@ -54,7 +54,7 @@ export function createDepositReconciliationService({
         try {
           await assertOwnership();
           const updated = await deposits.refreshDeposit(
-            transaction.signature, transaction.walletPublicKey
+            transaction.signature, transaction.walletPublicKey, transaction.tenantId ?? null
           );
           const resultingStatus = updated?.status ?? transaction.status;
           const outcome = resultingStatus === 'under_review'
