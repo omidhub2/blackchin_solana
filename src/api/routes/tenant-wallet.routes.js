@@ -11,6 +11,7 @@ import {
   requireObject, requireSafeInteger, requireString
 } from '../validation.js';
 import { badRequest } from '../../core/errors.js';
+import { rateLimitHook } from '../middleware/rate-limit.js';
 import { MAX_BATCH_SIZE } from '../../core/wallets/child-wallet.service.js';
 
 const CREATE_FIELDS = ['label', 'ownerId'];
@@ -23,11 +24,15 @@ export async function tenantWalletRoutes(app) {
   }
 
   app.addHook('preHandler', createTenantAuthHook({ db }));
+  const distributed = { db };
+  const createLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-hd-create', distributed });
+  const accountLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'tenant-address-create', distributed });
+  const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'tenant-recovery', distributed });
   const services = (request) => getServices(app, request).tenantWallets;
   const tenantId = (request) => request.tenant.id;
 
   app.post('/hd-wallets', {
-    preHandler: requireTenantScope('wallets:write')
+    preHandler: [requireTenantScope('wallets:write'), createLimiter]
   }, async (request, reply) => {
     const body = requireObject(request.body ?? {}, 'body');
     rejectUnknownKeys(body, CREATE_FIELDS);
@@ -61,7 +66,7 @@ export async function tenantWalletRoutes(app) {
   });
 
   app.post('/hd-wallets/:id/recovery-phrase/consume', {
-    preHandler: requireTenantScope('wallets:write')
+    preHandler: [requireTenantScope('wallets:write'), recoveryLimiter]
   }, async (request, reply) => {
     const id = parsePositiveId(request.params.id, 'id');
     const body = requireObject(request.body ?? {}, 'body');
@@ -90,7 +95,7 @@ export async function tenantWalletRoutes(app) {
   });
 
   app.post('/hd-wallets/:id/accounts', {
-    preHandler: requireTenantScope('addresses:write')
+    preHandler: [requireTenantScope('addresses:write'), accountLimiter]
   }, async (request, reply) => {
     const id = parsePositiveId(request.params.id, 'id');
     const body = requireObject(request.body ?? {}, 'body');
