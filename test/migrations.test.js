@@ -244,6 +244,7 @@ test('0009 adds tenant registry and nullable ownership foundation without guessi
   assert.match(sql, /fk_wallet_accounts_tenant_hd_wallet/i);
   assert.match(sql, /fk_blockchain_transactions_tenant_hd_wallet/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION prevent_tenant_reassignment/i);
+  assert.match(sql, /BEFORE UPDATE OF tenant_id ON tenant_api_credentials/i);
   assert.match(sql, /BEFORE UPDATE OF tenant_id ON wallets/i);
   assert.match(sql, /BEFORE UPDATE OF tenant_id ON hd_wallets/i);
   assert.match(sql, /BEFORE UPDATE OF tenant_id ON blockchain_transactions/i);
