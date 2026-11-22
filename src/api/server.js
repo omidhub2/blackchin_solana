@@ -59,6 +59,7 @@ export function buildServer({ services, logger = true, health = null } = {}) {
     requestTimeout: 35_000
   });
 
+  app.decorate('services', services ?? null);
   app.decorateRequest('services', null);
   app.decorateRequest('tenant', null);
 
