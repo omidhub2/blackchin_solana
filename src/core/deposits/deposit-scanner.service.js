@@ -183,7 +183,7 @@ export function createDepositScanner({
      *
      * @param {{ network: string, scope: string }} plan
      */
-    async scan({ network, scope }) {
+    async scan({ network, scope, assertOwnership = async () => {} }) {
       if (network !== rpc.network) {
         throw new AppError(
           `Scanner is bound to ${rpc.network} but was asked to scan ${network}`,
@@ -215,6 +215,7 @@ export function createDepositScanner({
         scan: for (const wallet of wallets) {
           activeCursorId = null;
           const walletScope = `address:${wallet.publicKey}`;
+          await assertOwnership();
           const cursor = await cursors.ensureCursor(db, {
             network,
             scope: walletScope,
@@ -226,6 +227,7 @@ export function createDepositScanner({
           }
 
           activeCursorId = cursor.id;
+          await assertOwnership();
           await cursors.markCursorRunning(db, cursor.id, new Date());
 
           const resumingBackfill = Boolean(cursor.backfillBeforeSignature);
@@ -272,9 +274,11 @@ export function createDepositScanner({
               summary.signatures += 1;
               metrics.signaturesScanned += 1;
 
+              await assertOwnership();
               const known = await deposits.isRecorded(entry.signature, wallet.publicKey);
 
               if (known) {
+                await assertOwnership();
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
@@ -318,6 +322,7 @@ export function createDepositScanner({
                 continue;
               }
 
+              await assertOwnership();
               const recorded = await deposits.recordVerifiedDeposit({
                 signature: entry.signature,
                 publicKey: wallet.publicKey,
@@ -364,7 +369,8 @@ export function createDepositScanner({
             }
 
             if (walletSignaturesScanned >= maxBatch) {
-              await cursors.saveBackfillProgress(db, cursor.id, {
+              await assertOwnership();
+          await cursors.saveBackfillProgress(db, cursor.id, {
                 anchorSignature,
                 beforeSignature: before,
                 highWaterSignature,
@@ -405,12 +411,14 @@ export function createDepositScanner({
               ? new Date(highWaterEntry.blockTime * 1000)
               : null;
             const advanced = resumingBackfill
-              ? await cursors.completeBackfill(db, cursor.id, {
+              ? await assertOwnership();
+          await cursors.completeBackfill(db, cursor.id, {
                 lastSignature: highWaterSignature,
                 lastSlot: highWaterSlot,
                 lastBlockTime: highWaterBlockTime
               })
-              : await cursors.advanceCursor(db, cursor.id, {
+              : await assertOwnership();
+          await cursors.advanceCursor(db, cursor.id, {
                 lastSignature: highWaterSignature,
                 lastSlot: highWaterSlot,
                 lastBlockTime: highWaterBlockTime
