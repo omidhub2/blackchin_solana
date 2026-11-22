@@ -165,6 +165,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0004'));
   assert.ok(versions.includes('0005'));
   assert.ok(versions.includes('0006'));
+  assert.ok(versions.includes('0007'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -190,4 +191,19 @@ test('0005 ledger immutability is additive and re-runnable', async () => {
   assert.match(sql, /CREATE OR REPLACE FUNCTION/i);
   assert.match(sql, /DROP TRIGGER IF EXISTS/i);
   assert.match(sql, /CREATE TRIGGER trg_blockchain_transactions_no_delete/i);
+});
+
+
+test('0007 adds append-only deposit reconciliation history without touching balances', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0007_deposit_reconciliation.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS deposit_reconciliation_cursors/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS deposit_reconciliation_events/i);
+  assert.match(sql, /REFERENCES blockchain_transactions\(id\) ON DELETE RESTRICT/i);
+  assert.match(sql, /outcome IN \('consistent', 'under_review', 'recovered', 'rpc_error'\)/i);
+  assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
 });
