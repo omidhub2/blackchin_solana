@@ -113,6 +113,15 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
     );
   }
 
+  function assertLegacyWithdrawalWallet(wallet) {
+    if (wallet.tenantId !== null && wallet.tenantId !== undefined) {
+      throw conflict(
+        'Tenant-owned wallets must use the authenticated tenant withdrawal service',
+        'TENANT_WALLET_REQUIRES_TENANT_API'
+      );
+    }
+  }
+
   return Object.freeze({
     /**
      * Fee/balance preview. Never signs or broadcasts.
@@ -123,6 +132,8 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       if (!wallet) {
         throw notFound('Sender wallet was not found in the wallet database', 'WALLET_NOT_FOUND');
       }
+
+      assertLegacyWithdrawalWallet(wallet);
 
       if (wallet.effectiveStatus !== 'active') {
         throw conflict('Wallet is not active and cannot send funds', 'WALLET_NOT_ACTIVE');
@@ -166,6 +177,8 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       if (!wallet) {
         throw notFound('Sender wallet was not found in the wallet database', 'WALLET_NOT_FOUND');
       }
+
+      assertLegacyWithdrawalWallet(wallet);
 
       if (wallet.effectiveStatus !== 'active') {
         throw conflict(
