@@ -211,7 +211,6 @@ export function createDepositScanner({
                 : null
             }
             : null;
-          let newestHandled = null;
           let pageCount = 0;
           let drained = false;
           let pageFailure = false;
@@ -246,7 +245,6 @@ export function createDepositScanner({
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
-                newestHandled ??= entry;
                 continue;
               }
 
@@ -263,20 +261,17 @@ export function createDepositScanner({
               if (parsed.meta?.err) {
                 summary.failed += 1;
                 metrics.failedTransactions += 1;
-                newestHandled ??= entry;
                 continue;
               }
 
               const transfers = rpc.extractIncomingTransfers(parsed, wallet.publicKey) ?? [];
               if (transfers.length === 0) {
-                newestHandled ??= entry;
                 continue;
               }
 
               const total = transfers.reduce((sum, item) => sum + BigInt(item.lamports), 0n);
               if (total <= 0n) {
-                newestHandled ??= entry;
-                continue;
+                  continue;
               }
 
               const state = await confirmationState(entry.signature);
@@ -328,7 +323,11 @@ export function createDepositScanner({
               await cursors.saveBackfillProgress(db, cursor.id, {
                 anchorSignature,
                 beforeSignature: before,
-                highWaterSignature
+                highWaterSignature,
+                highWaterSlot: highWaterEntry?.slot ?? null,
+                highWaterBlockTime: highWaterEntry?.blockTime
+                  ? new Date(highWaterEntry.blockTime * 1000)
+                  : null
               });
               stopReason = 'batch_limit';
               break;
