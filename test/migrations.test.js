@@ -167,6 +167,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0006'));
   assert.ok(versions.includes('0007'));
   assert.ok(versions.includes('0008'));
+  assert.ok(versions.includes('0009'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -227,4 +228,25 @@ test('0008 adds append-only withdrawal reconciliation evidence without a monetar
   assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)/i);
   assert.doesNotMatch(sql, /CREATE TABLE[^;]*(?:balance|reservation|ledger)/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
+
+
+test('0009 adds tenant registry and nullable ownership foundation without guessing legacy ownership', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0009_tenant_foundation.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenants/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_api_credentials/i);
+  assert.match(sql, /secret_hash BYTEA NOT NULL[\s\S]*octet_length\(secret_hash\) = 32/i);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS tenant_id BIGINT/i);
+  assert.match(sql, /fk_wallet_accounts_tenant_hd_wallet/i);
+  assert.match(sql, /fk_blockchain_transactions_tenant_hd_wallet/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION prevent_tenant_reassignment/i);
+  assert.match(sql, /BEFORE UPDATE OF tenant_id ON wallets/i);
+  assert.match(sql, /BEFORE UPDATE OF tenant_id ON hd_wallets/i);
+  assert.match(sql, /BEFORE UPDATE OF tenant_id ON blockchain_transactions/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+  assert.match(sql, /Existing rows remain unassigned/i);
 });
