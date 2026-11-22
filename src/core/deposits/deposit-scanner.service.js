@@ -93,13 +93,14 @@ export function createDepositScanner({
     lastError: null
   };
 
-  async function fetchPage(address, { after, before, limit }) {
+  async function fetchPage(address, { after, before, until, limit }) {
     try {
       const options = { limit };
 
       // `until` resumes strictly after the last fully processed signature.
       if (after) options.until = after;
       if (before) options.before = before;
+      if (until) options.until = until;
 
       return await rpc.getRecentSignatures(address, options);
     } catch (error) {
@@ -179,8 +180,6 @@ export function createDepositScanner({
       try {
         scan: for (const wallet of wallets) {
           activeCursorId = null;
-          // Solana signature history is address-specific; never share a cursor
-          // between different wallet addresses.
           const walletScope = `address:${wallet.publicKey}`;
           const cursor = await cursors.ensureCursor(db, {
             network,
@@ -194,17 +193,49 @@ export function createDepositScanner({
 
           activeCursorId = cursor.id;
           await cursors.markCursorRunning(db, cursor.id, new Date());
+
+          const resumingBackfill = Boolean(cursor.backfillBeforeSignature);
+          const anchorSignature = resumingBackfill
+            ? cursor.backfillAnchorSignature
+            : cursor.lastSignature;
+          let before = resumingBackfill ? cursor.backfillBeforeSignature : null;
+          let highWaterSignature = resumingBackfill
+            ? cursor.backfillHighWaterSignature
+            : null;
+          let highWaterEntry = resumingBackfill
+            ? {
+              signature: highWaterSignature,
+              slot: cursor.backfillHighWaterSlot ?? null,
+              blockTime: cursor.backfillHighWaterBlockTime
+                ? new Date(cursor.backfillHighWaterBlockTime).getTime() / 1000
+                : null
+            }
+            : null;
           let newestHandled = null;
-          let before = null;
+          let pageCount = 0;
+          let drained = false;
+          let pageFailure = false;
           const pages = Math.max(1, Math.ceil(maxBatch / pageSize));
 
-          for (let page = 0; page < pages; page += 1) {
+          while (pageCount < pages) {
             const signatures = await fetchPage(wallet.publicKey, {
-              after: cursor.lastSignature,
+              after: resumingBackfill ? null : cursor.lastSignature,
               before,
+              until: resumingBackfill ? anchorSignature : null,
               limit: pageSize
             });
 
+            if (signatures.length === 0) {
+              drained = true;
+              break;
+            }
+
+            if (!highWaterSignature) {
+              highWaterEntry = signatures[0];
+              highWaterSignature = signatures[0].signature;
+            }
+
+            let pageHandled = true;
             for (const entry of signatures) {
               summary.signatures += 1;
               metrics.signaturesScanned += 1;
@@ -212,7 +243,6 @@ export function createDepositScanner({
               const known = await deposits.isRecorded(entry.signature, wallet.publicKey);
 
               if (known) {
-                // Revisit known rows so their confirmation state can advance.
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
@@ -225,6 +255,8 @@ export function createDepositScanner({
               if (!parsed) {
                 log('scanner.transaction_not_available', { signature: entry.signature });
                 stopReason = 'transaction_unavailable';
+                pageHandled = false;
+                pageFailure = true;
                 break;
               }
 
@@ -236,21 +268,18 @@ export function createDepositScanner({
               }
 
               const transfers = rpc.extractIncomingTransfers(parsed, wallet.publicKey) ?? [];
-
               if (transfers.length === 0) {
                 newestHandled ??= entry;
                 continue;
               }
 
               const total = transfers.reduce((sum, item) => sum + BigInt(item.lamports), 0n);
-
               if (total <= 0n) {
                 newestHandled ??= entry;
                 continue;
               }
 
               const state = await confirmationState(entry.signature);
-
               const recorded = await deposits.recordVerifiedDeposit({
                 signature: entry.signature,
                 publicKey: wallet.publicKey,
@@ -273,62 +302,103 @@ export function createDepositScanner({
                 metrics.duplicatesSkipped += 1;
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
               }
-
               newestHandled ??= entry;
             }
 
-            if (stopReason) break;
-            if (signatures.length < pageSize) break;
-            before = signatures.at(-1)?.signature ?? null;
+            if (!pageHandled) break;
 
-            // Do not move the high-water cursor when the bounded scan window
-            // may have more pages; doing so would skip older unprocessed rows.
-            if (page === pages - 1) {
-              const remaining = await fetchPage(wallet.publicKey, {
-                after: cursor.lastSignature,
-                before,
-                limit: 1
+            pageCount += 1;
+            before = signatures.at(-1)?.signature ?? before;
+
+            // Probe the next page before deciding whether this high-water
+            // window is complete. The probe itself never advances progress.
+            const remaining = await fetchPage(wallet.publicKey, {
+              after: resumingBackfill ? null : cursor.lastSignature,
+              before,
+              until: resumingBackfill ? anchorSignature : null,
+              limit: 1
+            });
+
+            if (remaining.length === 0) {
+              drained = true;
+              break;
+            }
+
+            if (pageCount >= pages) {
+              await cursors.saveBackfillProgress(db, cursor.id, {
+                anchorSignature,
+                beforeSignature: before,
+                highWaterSignature
               });
-              if (remaining.length > 0) {
-                stopReason = 'batch_limit';
-                break;
-              }
+              stopReason = 'batch_limit';
+              break;
             }
           }
 
-          if (stopReason) {
-            const reason = stopReason === 'transaction_unavailable'
-              ? 'parsed transaction unavailable'
-              : 'scanner maxBatch reached; cursor was not advanced';
-            await cursors.markCursorError(db, cursor.id, reason);
+          if (pageFailure) {
+            // Keep any previously persisted continuation unchanged. If this
+            // was the first page, a retry safely replays it idempotently.
+            await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
+            summary.cursors.push({
+              address: wallet.publicKey,
+              lastSignature: cursor.lastSignature,
+              backfillBeforeSignature: cursor.backfillBeforeSignature ?? null
+            });
+            break;
+          }
+
+          if (stopReason === 'batch_limit') {
+            summary.cursors.push({
+              address: wallet.publicKey,
+              lastSignature: cursor.lastSignature,
+              backfillBeforeSignature: before
+            });
+            break;
+          }
+
+          if (drained && highWaterSignature) {
+            const highWaterSlot = highWaterEntry?.slot ?? null;
+            const highWaterBlockTime = highWaterEntry?.blockTime
+              ? new Date(highWaterEntry.blockTime * 1000)
+              : null;
+            const advanced = resumingBackfill || before !== null
+              ? await cursors.completeBackfill(db, cursor.id, {
+                lastSignature: highWaterSignature,
+                lastSlot: highWaterSlot,
+                lastBlockTime: highWaterBlockTime
+              })
+              : await cursors.advanceCursor(db, cursor.id, {
+                lastSignature: highWaterSignature,
+                lastSlot: highWaterSlot,
+                lastBlockTime: highWaterBlockTime
+              });
+
+            summary.cursors.push({
+              address: wallet.publicKey,
+              lastSignature: advanced.lastSignature,
+              lastSlot: advanced.lastSlot
+            });
+          } else if (!highWaterSignature) {
+            // No new signatures and no pending continuation.
+            await cursors.advanceCursor(db, cursor.id, {
+              lastSignature: cursor.lastSignature,
+              lastSlot: cursor.lastSlot,
+              lastBlockTime: cursor.lastBlockTime
+            });
             summary.cursors.push({
               address: wallet.publicKey,
               lastSignature: cursor.lastSignature,
               lastSlot: cursor.lastSlot
             });
-            break;
+          } else {
+            // A safety fallback: do not publish a high-water mark unless the
+            // entire interval was drained.
+            summary.cursors.push({
+              address: wallet.publicKey,
+              lastSignature: cursor.lastSignature,
+              backfillBeforeSignature: before
+            });
           }
-
-          // RPC returns newest-to-oldest. The cursor is the newest signature
-          // in the fully processed window, not the oldest page item.
-          const position = newestHandled ?? {
-            signature: cursor.lastSignature,
-            slot: cursor.lastSlot,
-            blockTime: cursor.lastBlockTime
-          };
-          const advanced = await cursors.advanceCursor(db, cursor.id, {
-            lastSignature: position.signature,
-            lastSlot: position.slot ?? null,
-            lastBlockTime: position.blockTime
-              ? new Date(position.blockTime * 1000)
-              : null
-          });
-
-          summary.cursors.push({
-            address: wallet.publicKey,
-            lastSignature: advanced.lastSignature,
-            lastSlot: advanced.lastSlot
-          });
         }
         return stopReason ? { ...summary, stopped: stopReason } : summary;
       } catch (error) {
