@@ -45,9 +45,25 @@ function toRpcError(error) {
 
 export function createDepositService({ db, rpc, network, commitment }) {
   async function resolveDepositWallet(publicKey, tenantId = null) {
-    return tenantId === null || tenantId === undefined
-      ? resolveWallet(db, publicKey)
-      : resolveDepositWalletForTenant(db, tenantId, publicKey);
+    if (tenantId !== null && tenantId !== undefined) {
+      return resolveDepositWalletForTenant(db, tenantId, publicKey);
+    }
+
+    const wallet = await resolveWallet(db, publicKey);
+    if (!wallet) return null;
+
+    // Legacy/global deposit operations must not read or mutate a wallet that
+    // has an explicit tenant owner. NULL-tenant legacy wallets remain supported.
+    const tenantOwner = await db.query(
+      `SELECT tenant_id FROM wallet_accounts
+       WHERE public_key = $1 AND tenant_id IS NOT NULL
+       UNION ALL
+       SELECT tenant_id FROM wallets
+       WHERE public_key = $1 AND tenant_id IS NOT NULL
+       LIMIT 1`,
+      [publicKey]
+    );
+    return tenantOwner.rows.length === 0 ? wallet : null;
   }
 
   async function findDeposit(signature, publicKey, tenantId = null) {
@@ -162,7 +178,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
      * Return deposit address metadata for a wallet.
      */
     async getDepositAddress(publicKey) {
-      const wallet = await resolveWallet(db, publicKey);
+      const wallet = await resolveDepositWallet(publicKey);
 
       if (!wallet) {
         throw notFound(
