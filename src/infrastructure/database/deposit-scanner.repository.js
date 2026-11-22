@@ -14,6 +14,9 @@ const CURSOR_COLUMNS = `
   last_signature,
   last_slot,
   last_block_time,
+  backfill_anchor_signature,
+  backfill_before_signature,
+  backfill_high_water_signature,
   last_run_at,
   last_error,
   status,
@@ -41,6 +44,9 @@ function mapCursor(row) {
     lastSignature: row.last_signature,
     lastSlot: row.last_slot === null ? null : Number(row.last_slot),
     lastBlockTime: row.last_block_time,
+    backfillAnchorSignature: row.backfill_anchor_signature ?? null,
+    backfillBeforeSignature: row.backfill_before_signature ?? null,
+    backfillHighWaterSignature: row.backfill_high_water_signature ?? null,
     lastRunAt: row.last_run_at,
     lastError: row.last_error,
     status: row.status,
@@ -119,6 +125,68 @@ export async function advanceCursor(db, cursorId, { lastSignature, lastSlot, las
           last_signature = $2,
           last_slot = $3,
           last_block_time = $4,
+          last_error = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${CURSOR_COLUMNS}
+    `,
+    [cursorId, lastSignature, lastSlot ?? null, lastBlockTime ?? null]
+  );
+
+  return mapCursor(result.rows[0]);
+}
+
+/**
+ * Persist pagination progress only after every signature in the page has been
+ * durably handled. The normal high-water cursor is deliberately not advanced.
+ */
+export async function saveBackfillProgress(db, cursorId, {
+  anchorSignature,
+  beforeSignature,
+  highWaterSignature
+}) {
+  if (typeof beforeSignature !== 'string' || beforeSignature.length === 0 ||
+      typeof highWaterSignature !== 'string' || highWaterSignature.length === 0 ||
+      (anchorSignature !== null && typeof anchorSignature !== 'string')) {
+    throw new TypeError('Invalid deposit scanner backfill position');
+  }
+
+  const result = await db.query(
+    `
+      UPDATE deposit_scanner_cursors
+      SET backfill_anchor_signature = $2,
+          backfill_before_signature = $3,
+          backfill_high_water_signature = $4,
+          status = 'idle',
+          last_error = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${CURSOR_COLUMNS}
+    `,
+    [cursorId, anchorSignature, beforeSignature, highWaterSignature]
+  );
+
+  return mapCursor(result.rows[0]);
+}
+
+/**
+ * Complete a backfill and atomically publish its newest processed signature.
+ */
+export async function completeBackfill(db, cursorId, {
+  lastSignature,
+  lastSlot,
+  lastBlockTime
+}) {
+  const result = await db.query(
+    `
+      UPDATE deposit_scanner_cursors
+      SET last_signature = $2,
+          last_slot = $3,
+          last_block_time = $4,
+          backfill_anchor_signature = NULL,
+          backfill_before_signature = NULL,
+          backfill_high_water_signature = NULL,
+          status = 'idle',
           last_error = NULL,
           updated_at = NOW()
       WHERE id = $1
