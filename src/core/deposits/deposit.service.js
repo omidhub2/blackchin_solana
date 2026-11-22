@@ -390,7 +390,11 @@ export function createDepositService({ db, rpc, network, commitment }) {
 
       const view = await inspect(signature, publicKey);
       const previouslyConfirmed = ['confirmed', 'credited'].includes(existing.status);
-      const chainContradiction = !view.found || view.status === 'rejected';
+      const finalityRegression = existing.status === 'credited' && view.status !== 'credited';
+      const confirmationRegression = existing.status === 'confirmed' &&
+        !['confirmed', 'credited'].includes(view.status);
+      const chainContradiction = !view.found || view.status === 'rejected' ||
+        finalityRegression || confirmationRegression;
       const nextStatus = chainContradiction && previouslyConfirmed
         ? 'under_review'
         : view.status === 'rejected'
