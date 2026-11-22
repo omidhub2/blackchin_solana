@@ -36,9 +36,9 @@ function parseAmountLamports(amountSol) {
   return value.toString();
 }
 
-function hashRequest({ fromPublicKey, toPublicKey, amountSol, network }) {
+function hashRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference }) {
   return crypto.createHash('sha256')
-    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountSol, network }))
+    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountSol, network, approvalReference }))
     .digest('hex');
 }
 
@@ -74,21 +74,21 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
     };
   }
 
-  async function reserve({ tenantId, idempotencyKey, requestHash, walletPublicKey, toPublicKey, amountLamports }) {
+  async function reserve({ tenantId, credentialId, approvalReference, idempotencyKey, requestHash, walletPublicKey, toPublicKey, amountLamports }) {
     const inserted = await db.query(
       `INSERT INTO api_idempotency_keys
-         (tenant_id, idempotency_key, request_hash, status, wallet_public_key,
-          operation, network, to_public_key, amount_lamports)
-       VALUES ($1, $2, $3, 'processing', $4, 'withdrawal', $5, $6, $7)
+         (tenant_id, tenant_credential_id, approval_reference, idempotency_key,
+          request_hash, status, wallet_public_key, operation, network, to_public_key, amount_lamports)
+       VALUES ($1, $2, $3, $4, $5, 'processing', $6, 'withdrawal', $7, $8, $9)
        ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
        RETURNING id`,
-      [tenantId, idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
+      [tenantId, credentialId, approvalReference, idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
     );
     if (inserted.rowCount === 1) return { reserved: true, id: inserted.rows[0].id };
 
     const existingResult = await db.query(
       `SELECT id, request_hash, status, response_json, wallet_public_key,
-              operation, network, to_public_key, amount_lamports
+              approval_reference, operation, network, to_public_key, amount_lamports
          FROM api_idempotency_keys
         WHERE tenant_id = $1 AND idempotency_key = $2
         LIMIT 1`,
@@ -97,7 +97,7 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
     const existing = existingResult.rows[0];
     if (!existing) throw conflict('Tenant idempotency reservation could not be read', 'IDEMPOTENCY_ERROR');
 
-    if (existing.request_hash !== requestHash || existing.operation !== 'withdrawal' ||
+    if (existing.request_hash !== requestHash || existing.approval_reference !== approvalReference || existing.operation !== 'withdrawal' ||
         existing.wallet_public_key !== walletPublicKey || existing.network !== network ||
         existing.to_public_key !== toPublicKey || String(existing.amount_lamports) !== amountLamports) {
       throw conflict('Idempotency-Key was already used for a different tenant withdrawal', 'IDEMPOTENCY_KEY_REUSED');
@@ -132,6 +132,7 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
 
     async submit(input) {
       const tenantId = assertTenantId(input?.tenantId);
+      const credentialId = assertTenantId(input?.credentialId);
       const { idempotencyKey, fromPublicKey, toPublicKey, amountSol, approvalReference, credentialId } = input ?? {};
       if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
         throw badRequest('A valid Idempotency-Key header is required', 'INVALID_IDEMPOTENCY_KEY');
@@ -152,9 +153,9 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
       if (authorization !== true && authorization?.allowed !== true) {
         throw conflict('Tenant withdrawal was denied by the configured policy', 'WITHDRAWAL_NOT_AUTHORIZED');
       }
-      const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol, network });
+      const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference });
       const reservation = await reserve({
-        tenantId, idempotencyKey, requestHash,
+        tenantId, credentialId, approvalReference, idempotencyKey, requestHash,
         walletPublicKey: fromPublicKey, toPublicKey, amountLamports
       });
       if (!reservation.reserved) return { ...reservation.replay, replayed: true };
@@ -216,7 +217,7 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
           throw new Error('Existing tenant withdrawal ledger row conflicts with the confirmed transaction');
         }
         if (!existing) {
-          await insertBlockchainTransaction(client, {
+          const inserted = await insertBlockchainTransaction(client, {
             signature: sent.signature, direction: 'withdrawal',
             walletPublicKey: fromPublicKey, hdWalletId: wallet.hdWalletId,
             counterparty: toPublicKey, amountLamports: sent.amountLamports,
@@ -226,6 +227,7 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
             idempotencyKey, tenantId,
             metadata: { walletType: wallet.walletType, accountIndex: wallet.accountIndex }
           });
+          if (!inserted.created) throw new Error('Withdrawal signature already exists outside this tenant ledger scope');
         }
         const completed = await client.query(
           `UPDATE api_idempotency_keys
