@@ -262,9 +262,9 @@ test('0011 separates tenant idempotency namespaces while preserving legacy key u
     'utf8'
   );
   assert.match(sql, /WHERE tenant_id IS NULL/i);
-  assert.match(sql, /ON api_idempotency_keys\\(idempotency_key\\)/i);
-  assert.match(sql, /ON api_idempotency_keys\\(tenant_id, idempotency_key\\)/i);
-  assert.doesNotMatch(sql, /UPDATE\\s+api_idempotency_keys\\s+SET\\s+tenant_id/i);
+  assert.match(sql, /ON api_idempotency_keys\(idempotency_key\)/i);
+  assert.match(sql, /ON api_idempotency_keys\(tenant_id, idempotency_key\)/i);
+  assert.doesNotMatch(sql, /UPDATE\s+api_idempotency_keys\s+SET\s+tenant_id/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
 });
 test('0010 binds Solana withdrawal reconciliation evidence to tenant identity without reassigning legacy rows', async () => {
