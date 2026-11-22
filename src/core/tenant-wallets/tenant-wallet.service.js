@@ -196,7 +196,11 @@ export function createTenantWalletService({
 
     async deriveAccountPreview(tenantId, hdWalletId, accountIndex) {
       validateAccountIndex(accountIndex);
-      const mnemonic = await this.revealMnemonicForSigning(tenantId, hdWalletId);
+      const wallet = await requireHdWallet(tenantId, hdWalletId);
+      if (wallet.status === 'archived') {
+        throw conflict('HD wallet is archived and cannot be used', 'HD_WALLET_ARCHIVED');
+      }
+      const mnemonic = decryptMnemonic(wallet);
       const derived = deriveSolanaAccount(mnemonic, accountIndex);
       const result = {
         hdWalletId: String(hdWalletId),
