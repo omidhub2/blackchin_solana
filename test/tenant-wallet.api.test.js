@@ -10,7 +10,10 @@ function makeCredentialDb({ tenantId = '41', scopes = ['wallets:read', 'wallets:
   const secretHash = crypto.createHash('sha256').update(apiKey, 'utf8').digest();
   const db = {
     async query(sql) {
-      if (String(sql).includes('INSERT INTO rate_limit_counters')) {\n        return { rowCount: 1, rows: [{ hit_count: 1, window_ends_at: new Date(Date.now() + 60_000) }] };\n      }\n      if (String(sql).startsWith('SELECT')) {
+      if (String(sql).includes('INSERT INTO rate_limit_counters')) {
+        return { rowCount: 1, rows: [{ hit_count: 1, window_ends_at: new Date(Date.now() + 60_000) }] };
+      }
+      if (String(sql).startsWith('SELECT')) {
         return { rowCount: 1, rows: [{
           credential_id: 'credential-1', tenant_id: tenantId, key_prefix: 'bc_live_test',
           secret_hash: secretHash, scopes, credential_status: 'active', expires_at: null,
