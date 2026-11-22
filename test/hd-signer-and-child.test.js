@@ -45,7 +45,7 @@ function buildPool(memory) {
   });
 
   // Legacy wallet metadata lookup used by resolveWallet().
-  pool.onQuery('FROM wallets\n      WHERE public_key = $1', (params) => {
+  pool.onQuery('WHERE public_key = $1', (params) => {
     const row = memory.legacyWallets?.get(params[0]);
     return {
       rows: row ? [{
