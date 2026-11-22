@@ -31,16 +31,16 @@ function hashRequest({ fromPublicKey, toPublicKey, amountSol }) {
 }
 
 export function createWithdrawalService({ db, rpc, network, commitment, cipher }) {
-  async function reserve({ idempotencyKey, requestHash, walletPublicKey }) {
+  async function reserve({ idempotencyKey, requestHash, walletPublicKey, network }) {
     const reservation = await db.query(
       `
         INSERT INTO api_idempotency_keys
-          (idempotency_key, request_hash, status, wallet_public_key, operation)
-        VALUES ($1, $2, 'processing', $3, 'withdrawal')
+          (idempotency_key, request_hash, status, wallet_public_key, operation, network)
+        VALUES ($1, $2, 'processing', $3, 'withdrawal', $4)
         ON CONFLICT (idempotency_key) DO NOTHING
         RETURNING idempotency_key
       `,
-      [idempotencyKey, requestHash, walletPublicKey]
+      [idempotencyKey, requestHash, walletPublicKey, network]
     );
 
     if (reservation.rowCount !== 0) {
@@ -49,7 +49,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
 
     const existingResult = await db.query(
       `
-        SELECT request_hash, status, response_json, wallet_public_key, operation
+        SELECT request_hash, status, response_json, wallet_public_key, operation, network
         FROM api_idempotency_keys
         WHERE idempotency_key = $1
         LIMIT 1
@@ -66,7 +66,8 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
     if (
       existing.request_hash !== requestHash ||
       existing.operation !== 'withdrawal' ||
-      existing.wallet_public_key !== walletPublicKey
+      existing.wallet_public_key !== walletPublicKey ||
+      existing.network !== network
     ) {
       throw conflict(
         'Idempotency-Key was already used for a different request',
@@ -175,7 +176,8 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       const reservation = await reserve({
         idempotencyKey,
         requestHash,
-        walletPublicKey: fromPublicKey
+        walletPublicKey: fromPublicKey,
+        network
       });
 
       if (!reservation.reserved) {
@@ -201,8 +203,9 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
                   WHERE idempotency_key = $1
                     AND status = 'processing'
                     AND transaction_signature IS NULL
+                    AND network = $3
                 `,
-                [idempotencyKey, signature]
+                [idempotencyKey, signature, network]
               );
               if (persisted.rowCount !== 1) {
                 throw new Error('Unable to persist signed withdrawal signature; transaction was not broadcast');
@@ -266,8 +269,9 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
                 transaction_signature = $3,
                 updated_at = NOW()
             WHERE idempotency_key = $1
+              AND network = $3
           `,
-          [idempotencyKey, JSON.stringify(response), sent.signature]
+          [idempotencyKey, JSON.stringify(response), sent.signature, network]
         );
       } catch (error) {
         // The transaction is already on-chain: leaving the key in
