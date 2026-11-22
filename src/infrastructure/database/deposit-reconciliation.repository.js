@@ -50,6 +50,36 @@ export async function recordReconciliationEvent(db, {
   return { id: String(result.rows[0].id), checkedAt: result.rows[0].checked_at };
 }
 
+/**
+ * Atomically append a reconciliation event and advance its keyset cursor.
+ * A single PostgreSQL statement guarantees both effects commit or neither does.
+ */
+export async function recordEventAndAdvanceCursor(db, {
+  transactionId, network, outcome, previousStatus, resultingStatus, details = {}
+}) {
+  const result = await db.query(
+    `WITH advanced AS (
+       UPDATE deposit_reconciliation_cursors
+          SET last_transaction_id = $1, last_run_at = NOW(),
+              last_error = NULL, status = 'running', updated_at = NOW()
+        WHERE network = $2
+        RETURNING network
+     )
+     INSERT INTO deposit_reconciliation_events
+       (transaction_id, network, outcome, previous_status, resulting_status, details)
+     SELECT $1, advanced.network, $3, $4, $5, $6::jsonb
+       FROM advanced
+     RETURNING id, checked_at`,
+    [transactionId, network, outcome, previousStatus, resultingStatus, JSON.stringify(details)]
+  );
+
+  if (result.rowCount !== 1) {
+    throw new Error('Reconciliation event and cursor could not be committed atomically');
+  }
+
+  return { id: String(result.rows[0].id), checkedAt: result.rows[0].checked_at };
+}
+
 export async function advanceReconciliationCursor(db, network, transactionId) {
   await db.query(
     `UPDATE deposit_reconciliation_cursors
