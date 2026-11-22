@@ -13,6 +13,8 @@ function candidate(overrides = {}) {
     idempotency_key: 'withdrawal-key-000001',
     wallet_public_key: SENDER,
     transaction_signature: SIGNATURE,
+    to_public_key: RECIPIENT,
+    amount_lamports: '2500',
     status: 'processing',
     operation: 'withdrawal',
     response_json: null,
@@ -175,4 +177,20 @@ test('RPC errors do not advance the reconciliation cursor', async () => {
 
   await assert.rejects(() => service.scan(), /Unable to reconcile withdrawal/);
   assert.equal(h.calls.some((x) => x.query.includes('UPDATE withdrawal_reconciliation_cursors') && x.query.includes('last_id = $2')), false);
+});
+
+test('finalized transaction with the wrong persisted amount remains under review', async () => {
+  const h = harness({
+    signatureStatus: { confirmationStatus: 'finalized', err: null, slot: 123 },
+    parsed: parsedTransfer({ lamports: 9999 })
+  });
+  const service = createWithdrawalReconciliationService({ db: h.db, rpc: h.rpc, network: 'devnet' });
+
+  await service.scan();
+
+  assert.equal(h.clientCalls.some((x) =>
+    x.query.includes('INSERT INTO withdrawal_reconciliation_events') &&
+    x.params?.[3] === 'under_review'
+  ), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
 });
