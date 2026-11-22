@@ -104,9 +104,9 @@ export function createDepositScannerWorker({
         candidate.release();
         log('scanner.lock_not_acquired', { network, scope });
 
-        // Stay idle and retry on the normal cadence instead of spinning.
-        state = 'idle';
-        schedule(intervalMs);
+        // Keep the worker in the running state. The scheduler that invoked
+        // this run owns the next retry; scheduling here as well would create
+        // duplicate timers, and switching to idle would make every retry skip.
         return { skipped: 'lock_not_acquired' };
       }
 
