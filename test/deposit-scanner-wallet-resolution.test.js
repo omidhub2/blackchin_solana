@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveScanWallets } from '../src/core/services.js';
+import { resolveScanWallets } from '../src/core/deposits/deposit-scanner-wallets.js';
 
 test('all scan scope combines active HD children and legacy standalone wallets without duplicates', async () => {
   const queries = [];
