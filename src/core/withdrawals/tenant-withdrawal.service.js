@@ -1,0 +1,240 @@
+/**
+ * Tenant-isolated native SOL withdrawals for HD child wallets.
+ * Tenant ownership is enforced on wallet lookup, signing, idempotency and ledger writes.
+ */
+import crypto from 'node:crypto';
+import { badRequest, conflict, notFound } from '../errors.js';
+import {
+  findAccountByPublicKeyForTenant,
+  findHdWalletByIdForTenant
+} from '../../infrastructure/database/tenant-wallet.repository.js';
+import { withTenantSigningKey } from '../../infrastructure/security/wallet-signer.js';
+import {
+  findTransactionBySignatureForTenant,
+  insertBlockchainTransaction
+} from '../../infrastructure/database/blockchain-transaction.repository.js';
+
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
+
+function assertTenantId(value) {
+  if ((typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') ||
+      !/^[1-9][0-9]*$/.test(String(value))) {
+    throw new TypeError('tenantId must be a positive integer');
+  }
+  return String(value);
+}
+
+function parseAmountLamports(amountSol) {
+  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(amountSol)) {
+    throw badRequest('amountSol must be a positive decimal string with at most 9 decimal places', 'INVALID_AMOUNT');
+  }
+  const [whole, fraction = ''] = amountSol.split('.');
+  const value = BigInt(whole) * 1_000_000_000n + BigInt((fraction + '000000000').slice(0, 9));
+  if (value <= 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw badRequest('amountSol is outside the supported transfer range', 'INVALID_AMOUNT');
+  }
+  return value.toString();
+}
+
+function hashRequest({ fromPublicKey, toPublicKey, amountSol, network }) {
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountSol, network }))
+    .digest('hex');
+}
+
+export function createTenantWithdrawalService({ db, rpc, network, commitment, cipher }) {
+  if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
+    throw new TypeError('A PostgreSQL database pool is required');
+  }
+  if (!rpc || typeof rpc.estimateTransfer !== 'function' || typeof rpc.sendSolWithSigner !== 'function') {
+    throw new TypeError('Solana transfer RPC methods are required');
+  }
+
+  async function requireWallet(tenantId, publicKey) {
+    const account = await findAccountByPublicKeyForTenant(db, tenantId, publicKey);
+    if (!account) {
+      throw notFound('HD child wallet was not found for this tenant', 'WALLET_ACCOUNT_NOT_FOUND');
+    }
+    const parent = await findHdWalletByIdForTenant(db, tenantId, account.hdWalletId);
+    if (!parent) {
+      throw notFound('HD parent wallet was not found for this tenant', 'HD_WALLET_NOT_FOUND');
+    }
+    if (account.network !== network || parent.network !== network) {
+      throw conflict('Wallet network does not match the configured Solana network', 'NETWORK_MISMATCH');
+    }
+    if (account.status !== 'active' || parent.status !== 'active') {
+      throw conflict('Both the child wallet and its parent HD wallet must be active', 'WALLET_NOT_ACTIVE');
+    }
+    return {
+      publicKey: account.publicKey,
+      walletType: 'hd_child',
+      hdWalletId: account.hdWalletId,
+      accountIndex: account.accountIndex,
+      network: account.network
+    };
+  }
+
+  async function reserve({ tenantId, idempotencyKey, requestHash, walletPublicKey, toPublicKey, amountLamports }) {
+    const inserted = await db.query(
+      `INSERT INTO api_idempotency_keys
+         (tenant_id, idempotency_key, request_hash, status, wallet_public_key,
+          operation, network, to_public_key, amount_lamports)
+       VALUES ($1, $2, $3, 'processing', $4, 'withdrawal', $5, $6, $7)
+       ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+       RETURNING id`,
+      [tenantId, idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
+    );
+    if (inserted.rowCount === 1) return { reserved: true, id: inserted.rows[0].id };
+
+    const existingResult = await db.query(
+      `SELECT id, request_hash, status, response_json, wallet_public_key,
+              operation, network, to_public_key, amount_lamports
+         FROM api_idempotency_keys
+        WHERE tenant_id = $1 AND idempotency_key = $2
+        LIMIT 1`,
+      [tenantId, idempotencyKey]
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) throw conflict('Tenant idempotency reservation could not be read', 'IDEMPOTENCY_ERROR');
+
+    if (existing.request_hash !== requestHash || existing.operation !== 'withdrawal' ||
+        existing.wallet_public_key !== walletPublicKey || existing.network !== network ||
+        existing.to_public_key !== toPublicKey || String(existing.amount_lamports) !== amountLamports) {
+      throw conflict('Idempotency-Key was already used for a different tenant withdrawal', 'IDEMPOTENCY_KEY_REUSED');
+    }
+    if (existing.status === 'completed') return { reserved: false, replay: existing.response_json };
+    throw conflict(
+      existing.status === 'processing'
+        ? 'This tenant withdrawal is still processing and must be reconciled before retry'
+        : 'This tenant idempotency key belongs to a failed request and cannot be reused',
+      'IDEMPOTENCY_IN_PROGRESS'
+    );
+  }
+
+  async function failReservation(tenantId, idempotencyKey) {
+    await db.query(
+      `UPDATE api_idempotency_keys
+          SET status = 'failed', updated_at = NOW()
+        WHERE tenant_id = $1 AND idempotency_key = $2
+          AND status = 'processing' AND transaction_signature IS NULL`,
+      [tenantId, idempotencyKey]
+    );
+  }
+
+  return Object.freeze({
+    async estimate({ tenantId, fromPublicKey, toPublicKey, amountSol }) {
+      tenantId = assertTenantId(tenantId);
+      await requireWallet(tenantId, fromPublicKey);
+      parseAmountLamports(amountSol);
+      const estimate = await rpc.estimateTransfer({ fromPublicKey, toPublicKey, amountSol });
+      return { ...estimate, network, walletType: 'hd_child' };
+    },
+
+    async submit(input) {
+      const tenantId = assertTenantId(input?.tenantId);
+      const { idempotencyKey, fromPublicKey, toPublicKey, amountSol, approved } = input ?? {};
+      if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+        throw badRequest('A valid Idempotency-Key header is required', 'INVALID_IDEMPOTENCY_KEY');
+      }
+      if (approved !== true) throw badRequest('Explicit withdrawal approval is required', 'APPROVAL_REQUIRED');
+
+      const wallet = await requireWallet(tenantId, fromPublicKey);
+      const amountLamports = parseAmountLamports(amountSol);
+      const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol, network });
+      const reservation = await reserve({
+        tenantId, idempotencyKey, requestHash,
+        walletPublicKey: fromPublicKey, toPublicKey, amountLamports
+      });
+      if (!reservation.reserved) return { ...reservation.replay, replayed: true };
+
+      let signaturePersisted = false;
+      let sent;
+      try {
+        sent = await withTenantSigningKey(db, tenantId, fromPublicKey, async ({ keypair }) =>
+          rpc.sendSolWithSigner({
+            fromPublicKey, toPublicKey, amountSol,
+            getKeypair: () => keypair,
+            commitment,
+            onSigned: async ({ signature }) => {
+              const persisted = await db.query(
+                `UPDATE api_idempotency_keys
+                    SET transaction_signature = $3, updated_at = NOW()
+                  WHERE tenant_id = $1 AND idempotency_key = $2
+                    AND status = 'processing' AND transaction_signature IS NULL
+                    AND network = $4`,
+                [tenantId, idempotencyKey, signature, network]
+              );
+              if (persisted.rowCount !== 1) {
+                throw new Error('Unable to persist tenant withdrawal signature before broadcast');
+              }
+              signaturePersisted = true;
+            }
+          }), { cipher, deploymentNetwork: network }
+        );
+      } catch (error) {
+        if (!signaturePersisted) {
+          await failReservation(tenantId, idempotencyKey);
+        } else {
+          error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+          error.message = 'Tenant withdrawal signature was persisted; do not retry with a new idempotency key. Reconciliation is required.';
+        }
+        throw error;
+      }
+
+      const response = {
+        sent: true, signature: sent.signature, network: sent.network,
+        from: sent.from, to: sent.to, amountLamports: sent.amountLamports,
+        amountSol: sent.amountSol, feeLamports: sent.feeLamports,
+        feeSol: sent.feeSol, slot: sent.slot,
+        confirmationStatus: sent.confirmationStatus,
+        walletType: wallet.walletType, hdWalletId: wallet.hdWalletId
+      };
+
+      const client = await db.connect();
+      try {
+        await client.query('BEGIN');
+        const existing = await findTransactionBySignatureForTenant(
+          client, tenantId, sent.signature, fromPublicKey, 'withdrawal'
+        );
+        if (existing && (
+          existing.amountLamports !== sent.amountLamports ||
+          existing.counterparty !== toPublicKey ||
+          ['failed', 'rejected'].includes(existing.status)
+        )) {
+          throw new Error('Existing tenant withdrawal ledger row conflicts with the confirmed transaction');
+        }
+        if (!existing) {
+          await insertBlockchainTransaction(client, {
+            signature: sent.signature, direction: 'withdrawal',
+            walletPublicKey: fromPublicKey, hdWalletId: wallet.hdWalletId,
+            counterparty: toPublicKey, amountLamports: sent.amountLamports,
+            feeLamports: sent.feeLamports, network,
+            commitment: sent.confirmationStatus ?? commitment,
+            status: 'confirmed', slot: sent.slot ?? null,
+            idempotencyKey, tenantId,
+            metadata: { walletType: wallet.walletType, accountIndex: wallet.accountIndex }
+          });
+        }
+        const completed = await client.query(
+          `UPDATE api_idempotency_keys
+              SET status = 'completed', response_json = $3::jsonb,
+                  transaction_signature = $4, updated_at = NOW()
+            WHERE tenant_id = $1 AND idempotency_key = $2
+              AND status = 'processing' AND transaction_signature = $4`,
+          [tenantId, idempotencyKey, JSON.stringify(response), sent.signature]
+        );
+        if (completed.rowCount !== 1) throw new Error('Tenant withdrawal idempotency state changed before completion');
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        // The chain may already have accepted the transaction. Keep the signed
+        // reservation processing so reconciliation, never a retry, resolves it.
+        error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+        throw error;
+      } finally {
+        client.release();
+      }
+      return response;
+    }
+  });
+}
