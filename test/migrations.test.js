@@ -286,3 +286,27 @@ test('0010 binds Solana withdrawal reconciliation evidence to tenant identity wi
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
   assert.match(sql, /globally unique idempotency_key constraint is deliberately retained/i);
 });
+
+
+test('0012 creates fail-closed tenant withdrawal policy, approval and append-only audit foundations', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0012_tenant_withdrawal_policy_foundation.sql'),
+    'utf8'
+  );
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_withdrawal_policies/i);
+  assert.match(sql, /enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.match(sql, /emergency_frozen BOOLEAN NOT NULL DEFAULT TRUE/i);
+  assert.match(sql, /max_daily_lamports NUMERIC\(30, 0\)/i);
+  assert.match(sql, /max_weekly_count INTEGER/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_withdrawal_destinations/i);
+  assert.match(sql, /status IN \('pending', 'active', 'revoked'\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_withdrawal_approvals/i);
+  assert.match(sql, /FOREIGN KEY \(tenant_id, credential_id\)/i);
+  assert.match(sql, /UNIQUE \(issuer, issuer_event_id\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_withdrawal_policy_events/i);
+  assert.match(sql, /BEFORE UPDATE OR DELETE ON tenant_withdrawal_policy_events/i);
+  assert.match(sql, /BEFORE UPDATE ON tenant_withdrawal_approvals/i);
+  assert.match(sql, /network IN \('devnet', 'testnet', 'mainnet-beta'\)/i);
+  assert.match(sql, /absence means disabled/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+});
