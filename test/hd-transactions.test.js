@@ -613,7 +613,9 @@ function depositHarness({ parsed, status }) {
 
   pool.onQuery('FROM blockchain_transactions', (params) => {
     const row = rows.find(
-      (item) => item.signature === params[0] && item.walletPublicKey === params[1] && item.direction === params[2]
+      (item) => item.signature === params[0] &&
+        item.walletPublicKey === params[1] &&
+        item.direction === 'deposit'
     );
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   });
