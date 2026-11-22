@@ -51,7 +51,7 @@ test('tenant withdrawal estimate uses authenticated tenant identity', async () =
   } finally { await app.close(); }
 });
 
-test('tenant withdrawal submit requires idempotency key and explicit approval', async () => {
+test('tenant withdrawal submit requires idempotency key and a partner approval reference', async () => {
   const h = harness();
   const app = buildServer({ logger: false, services: h.services });
   try {
@@ -76,7 +76,7 @@ test('tenant withdrawal routes enforce operation scopes', async () => {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/withdrawals',
       headers: { 'x-api-key': h.apiKey, 'idempotency-key': 'tenant-withdrawal-key-001' },
-      payload: { fromPublicKey: sender, toPublicKey: recipient, amountSol: '0.25', approved: true }
+      payload: { fromPublicKey: sender, toPublicKey: recipient, amountSol: '0.25', approvalReference: 'partner-approval-001' }
     });
     assert.equal(response.statusCode, 403);
     assert.equal(h.calls.length, 0);
