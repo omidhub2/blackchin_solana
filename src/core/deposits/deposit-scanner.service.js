@@ -211,17 +211,16 @@ export function createDepositScanner({
                 : null
             }
             : null;
-          let pageCount = 0;
+          let walletSignaturesScanned = 0;
           let drained = false;
           let pageFailure = false;
-          const pages = Math.max(1, Math.ceil(maxBatch / pageSize));
 
-          while (pageCount < pages) {
+          while (walletSignaturesScanned < maxBatch) {
             const signatures = await fetchPage(wallet.publicKey, {
               after: resumingBackfill ? null : cursor.lastSignature,
               before,
               until: resumingBackfill ? anchorSignature : null,
-              limit: pageSize
+              limit: Math.min(pageSize, maxBatch - walletSignaturesScanned)
             });
 
             if (signatures.length === 0) {
@@ -301,7 +300,7 @@ export function createDepositScanner({
 
             if (!pageHandled) break;
 
-            pageCount += 1;
+            walletSignaturesScanned += signatures.length;
             before = signatures.at(-1)?.signature ?? before;
 
             // Probe the next page before deciding whether this high-water
@@ -318,7 +317,7 @@ export function createDepositScanner({
               break;
             }
 
-            if (pageCount >= pages) {
+            if (walletSignaturesScanned >= maxBatch) {
               await cursors.saveBackfillProgress(db, cursor.id, {
                 anchorSignature,
                 beforeSignature: before,
