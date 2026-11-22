@@ -13,12 +13,14 @@ import {
   TRANSACTION_STATUSES,
   findTransactionBySignature,
   findTransactionBySignatureForTenant,
+  findUnassignedDepositBySignature,
   listDepositsBySignatureForTenant,
   listDepositsForTenant,
   getDepositMonitoringForTenant,
   insertBlockchainTransaction,
   updateTransactionStatus,
-  updateTransactionStatusForTenant
+  updateTransactionStatusForTenant,
+  updateUnassignedTransactionStatus
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
 import { resolveWallet } from '../../infrastructure/security/wallet-signer.js';
 import { resolveDepositWalletForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
@@ -68,7 +70,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
 
   async function findDeposit(signature, publicKey, tenantId = null) {
     return tenantId === null || tenantId === undefined
-      ? findTransactionBySignature(db, signature, publicKey, 'deposit')
+      ? findUnassignedDepositBySignature(db, signature, publicKey)
       : findTransactionBySignatureForTenant(db, tenantId, signature, publicKey, 'deposit');
   }
   async function getParsed(signature) {
@@ -366,7 +368,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
     async recordDeposit(signature, publicKey) {
       const view = await inspect(signature, publicKey);
 
-      const existing = await findTransactionBySignature(db, signature, publicKey, 'deposit');
+      const existing = await findDeposit(signature, publicKey);
 
       if (existing) {
         return { deposit: existing, created: false, status: existing.status };
@@ -423,7 +425,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
       });
 
       if (!inserted.created) {
-        const raced = await findTransactionBySignature(db, signature, publicKey, 'deposit');
+        const raced = await findDeposit(signature, publicKey);
         return { deposit: raced, created: false, status: raced?.status ?? null };
       }
 
@@ -475,7 +477,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
       }
 
       const updateStatus = tenantId === null || tenantId === undefined
-        ? updateTransactionStatus
+        ? updateUnassignedTransactionStatus
         : (executor, id, input) => updateTransactionStatusForTenant(executor, tenantId, id, input);
       return updateStatus(db, existing.id, {
         status: nextStatus,
