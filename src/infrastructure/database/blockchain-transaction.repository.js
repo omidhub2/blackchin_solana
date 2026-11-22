@@ -313,3 +313,37 @@ export async function getDepositMonitoringForTenant(db, tenantId) {
     lastActivityAt: row.last_activity_at
   }));
 }
+
+/** Legacy-only deposit lookup. Tenant-owned and other legacy domains are excluded. */
+export async function findUnassignedDepositBySignature(db, signature, walletPublicKey) {
+  const result = await db.query(
+    `SELECT ${TX_COLUMNS}
+     FROM blockchain_transactions
+     WHERE tenant_id IS NULL AND signature = $1
+       AND wallet_public_key = $2 AND direction = 'deposit'
+     LIMIT 1`,
+    [signature, walletPublicKey]
+  );
+  return mapBlockchainTransaction(result.rows[0]);
+}
+
+/** Legacy-only status update; cannot mutate a tenant-owned transaction. */
+export async function updateUnassignedTransactionStatus(db, id, input) {
+  const { status, commitment, slot, blockTime, failureReason, metadata, clearFailureReason = false } = input ?? {};
+  if (!TRANSACTION_STATUSES.includes(status)) throw new TypeError('Invalid transaction status');
+  const result = await db.query(
+    `UPDATE blockchain_transactions
+     SET status = $2,
+         commitment = COALESCE($3, commitment),
+         slot = COALESCE($4, slot),
+         block_time = COALESCE($5, block_time),
+         failure_reason = CASE WHEN $8 THEN NULL ELSE COALESCE($6, failure_reason) END,
+         metadata = CASE WHEN $7::jsonb IS NULL THEN metadata ELSE metadata || $7::jsonb END,
+         updated_at = NOW()
+     WHERE tenant_id IS NULL AND id = $1
+     RETURNING ${TX_COLUMNS}`,
+    [id, status, commitment ?? null, slot ?? null, blockTime ?? null,
+      failureReason ?? null, metadata ? JSON.stringify(metadata) : null, clearFailureReason === true]
+  );
+  return mapBlockchainTransaction(result.rows[0]);
+}
