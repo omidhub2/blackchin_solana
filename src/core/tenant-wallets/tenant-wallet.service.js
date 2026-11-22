@@ -23,6 +23,7 @@ import {
   findAccountByIdForTenant,
   findAccountByPublicKeyForTenant,
   findAccountAtIndexForTenant,
+  findAccountByPathForTenant,
   listAccountsByHdWalletForTenant,
   countAccountsByHdWalletForTenant,
   updateAccountStatusForTenant
@@ -260,6 +261,12 @@ export function createTenantWalletService({
       validateAccountIndex(accountIndex);
       const account = await findAccountAtIndexForTenant(db, tenantId, hdWalletId, accountIndex);
       if (!account) throw notFound('Wallet account was not found for this derivation index', 'WALLET_ACCOUNT_NOT_FOUND');
+      return account;
+    },
+
+    async getAccountByPath(tenantId, hdWalletId, derivationPath) {
+      const account = await findAccountByPathForTenant(db, tenantId, hdWalletId, derivationPath);
+      if (!account) throw notFound('Wallet account was not found for this derivation path', 'WALLET_ACCOUNT_NOT_FOUND');
       return account;
     },
 
