@@ -265,10 +265,11 @@ test('scanner resumes a maxBatch backfill across runs and publishes high-water o
       const startIndex = options.before
         ? entries.findIndex((entry) => entry.signature === options.before) + 1
         : 0;
-      const untilIndex = options.until
+      const foundUntilIndex = options.until
         ? entries.findIndex((entry) => entry.signature === options.until)
-        : entries.length;
-      if (startIndex < 0 || untilIndex < 0 || startIndex >= untilIndex) return [];
+        : -1;
+      const untilIndex = foundUntilIndex < 0 ? entries.length : foundUntilIndex;
+      if (startIndex < 0 || startIndex >= untilIndex) return [];
       return entries.slice(startIndex, Math.min(startIndex + options.limit, untilIndex));
     },
     async getParsedTransaction(signature) {
