@@ -25,8 +25,11 @@ function harness({ candidates = [transactionRow()], refresh } = {}) {
       if (sql.includes('FROM blockchain_transactions')) {
         return { rows: candidates, rowCount: candidates.length };
       }
-      if (sql.includes('INSERT INTO deposit_reconciliation_events')) {
+      if (sql.includes('WITH advanced AS')) {
         return { rows: [{ id: '900', checked_at: new Date() }], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO deposit_reconciliation_events')) {
+        return { rows: [{ id: '901', checked_at: new Date() }], rowCount: 1 };
       }
       if (sql.includes('UPDATE deposit_reconciliation_cursors')) {
         return { rows: [], rowCount: 1 };
@@ -53,9 +56,11 @@ test('reconciliation records discrepancies and advances only after durable event
 
   assert.equal(result.checked, 1);
   assert.equal(result.failed, 0);
-  assert.equal(h.calls.filter((call) => call.sql.includes('INSERT INTO deposit_reconciliation_events')).length, 1);
-  assert.equal(h.calls.filter((call) => call.sql.includes('UPDATE deposit_reconciliation_cursors')).length, 1);
-  const event = h.calls.find((call) => call.sql.includes('INSERT INTO deposit_reconciliation_events'));
+  const atomicWrite = h.calls.find((call) => call.sql.includes('WITH advanced AS'));
+  assert.ok(atomicWrite);
+  assert.match(atomicWrite.sql, /UPDATE deposit_reconciliation_cursors/);
+  assert.match(atomicWrite.sql, /INSERT INTO deposit_reconciliation_events/);
+  const event = atomicWrite;
   assert.equal(event.params[2], 'under_review');
   assert.equal(event.params[3], 'credited');
   assert.equal(event.params[4], 'under_review');
@@ -75,7 +80,7 @@ test('reconciliation records RPC failures and does not advance beyond an unverif
 
   await assert.rejects(() => service.scan({ network: 'devnet' }), /RPC unavailable/);
   assert.equal(h.calls.filter((call) => call.sql.includes('INSERT INTO deposit_reconciliation_events')).length, 1);
-  assert.equal(h.calls.filter((call) => call.sql.includes('UPDATE deposit_reconciliation_cursors')).length, 1);
+  assert.equal(h.calls.some((call) => call.sql.includes('SET last_transaction_id = $2')), false);
   const event = h.calls.find((call) => call.sql.includes('INSERT INTO deposit_reconciliation_events'));
   assert.equal(event.params[2], 'rpc_error');
   assert.equal(h.calls.some((call) => call.sql.includes('SET last_transaction_id = $2')), false);
