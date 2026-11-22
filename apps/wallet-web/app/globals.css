@@ -41,23 +41,27 @@ body {
 
 @layer components {
   .panel {
-    @apply rounded-2xl border border-white/[0.06] bg-ink-850/80 shadow-panel backdrop-blur-xl;
+    @apply rounded-2xl border border-white/[0.08] bg-ink-850/90 shadow-panel backdrop-blur-xl;
+    background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 42%);
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.035);
   }
 
   .panel-muted {
-    @apply rounded-xl border border-white/[0.05] bg-ink-900/70;
+    @apply rounded-xl border border-white/[0.07] bg-ink-900/85;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   }
 
   .panel-hover {
-    @apply transition duration-200 hover:border-cyan-400/20 hover:bg-ink-800/80;
+    @apply transition duration-200 hover:-translate-y-0.5 hover:border-cyan-400/25 hover:bg-ink-800/90;
   }
 
   .field-label {
-    @apply mb-1.5 block text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500;
+    @apply mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400;
   }
 
   .input {
-    @apply w-full rounded-xl border border-white/10 bg-ink-900/80 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-cyan-400/50 focus:outline-none focus:ring-2 focus:ring-cyan-400/10;
+    @apply w-full rounded-xl border border-white/10 bg-ink-900/90 px-3.5 py-3 text-sm text-slate-100 placeholder:text-slate-600 transition;
+    @apply focus:border-cyan-400/60 focus:outline-none focus:ring-4 focus:ring-cyan-400/[0.08];
   }
 
   .select {
@@ -66,7 +70,8 @@ body {
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/40 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/40 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
@@ -74,7 +79,7 @@ body {
   }
 
   .btn-secondary {
-    @apply btn border border-white/10 bg-white/[0.03] text-slate-200 hover:border-cyan-400/30 hover:bg-white/[0.06];
+    @apply btn border border-white/10 bg-white/[0.045] text-slate-200 hover:border-cyan-400/30 hover:bg-white/[0.08];
   }
 
   .btn-danger {
@@ -82,11 +87,11 @@ body {
   }
 
   .btn-ghost {
-    @apply btn text-slate-400 hover:bg-white/[0.05] hover:text-slate-100;
+    @apply btn text-slate-400 hover:bg-white/[0.06] hover:text-slate-100;
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium;
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold;
   }
 
   .table-shell {
@@ -98,19 +103,23 @@ body {
   }
 
   .table thead th {
-    @apply border-b border-white/[0.06] px-4 py-3 text-start text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500;
+    @apply border-b border-white/[0.09] bg-white/[0.025] px-4 py-4 text-start text-[10px] font-bold uppercase tracking-[0.13em] text-slate-400;
   }
 
   .table tbody td {
-    @apply border-b border-white/[0.04] px-4 py-3.5 align-middle text-slate-300;
+    @apply border-b border-white/[0.045] px-4 py-4 align-middle text-slate-300;
   }
 
   .table tbody tr {
-    @apply transition-colors hover:bg-white/[0.025];
+    @apply transition-colors hover:bg-cyan-300/[0.035];
+  }
+
+  .table tbody tr:last-child td {
+    @apply border-b-0;
   }
 
   .skeleton {
-    @apply animate-pulse rounded-lg bg-white/[0.06];
+    @apply animate-pulse rounded-lg bg-white/[0.07];
   }
 
   .mono {
