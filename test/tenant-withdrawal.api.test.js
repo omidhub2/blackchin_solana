@@ -58,13 +58,14 @@ test('tenant withdrawal submit requires idempotency key and explicit approval', 
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/withdrawals',
       headers: { 'x-api-key': h.apiKey, 'idempotency-key': 'tenant-withdrawal-key-001' },
-      payload: { fromPublicKey: sender, toPublicKey: recipient, amountSol: '0.25', approved: true }
+      payload: { fromPublicKey: sender, toPublicKey: recipient, amountSol: '0.25', approvalReference: 'partner-approval-001' }
     });
     assert.equal(response.statusCode, 201);
     assert.equal(h.calls[0][0], 'submit');
     assert.equal(h.calls[0][1].tenantId, '42');
     assert.equal(h.calls[0][1].idempotencyKey, 'tenant-withdrawal-key-001');
-    assert.equal(h.calls[0][1].approved, true);
+    assert.equal(h.calls[0][1].approvalReference, 'partner-approval-001');
+    assert.equal(h.calls[0][1].credentialId, 'credential-1');
   } finally { await app.close(); }
 });
 
