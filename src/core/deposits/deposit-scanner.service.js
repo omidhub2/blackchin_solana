@@ -149,8 +149,18 @@ export function createDepositScanner({
       }
 
       if (confirmations !== null && confirmations >= confirmationsRequired) {
-        return { status: 'confirmed', commitment: 'confirmed', confirmations };
+        return {
+          status: 'confirmed',
+          commitment: status?.confirmationStatus ?? 'processed',
+          confirmations
+        };
       }
+
+      return {
+        status: 'confirming',
+        commitment: status?.confirmationStatus ?? 'processed',
+        confirmations
+      };
     } catch (error) {
       // The status endpoint is advisory; the parsed transaction already proves
       // successful execution. Fall through to the conservative state.
