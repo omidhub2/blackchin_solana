@@ -155,3 +155,80 @@ test('recordVerifiedDeposit refuses failed or rejected transaction states', asyn
 
   assert.equal(h.inserted.length, 0);
 });
+
+
+test('previously credited deposits enter review when missing from chain and recover on finality', async () => {
+  const account = {
+    id: '21',
+    hd_wallet_id: '9',
+    public_key: destination,
+    account_index: 0,
+    derivation_path: "m/44'/501'/0'/0'",
+    wallet_type: 'hd_child',
+    network: 'devnet',
+    status: 'active'
+  };
+  const root = { id: '9', network: 'devnet', status: 'active' };
+  const existing = {
+    id: '77',
+    signature,
+    direction: 'deposit',
+    wallet_public_key: destination,
+    hd_wallet_id: '9',
+    counterparty: from,
+    amount_lamports: '1250000',
+    fee_lamports: null,
+    network: 'devnet',
+    commitment: 'finalized',
+    status: 'credited',
+    slot: 120,
+    block_time: null,
+    failure_reason: null,
+    idempotency_key: null,
+    metadata: {},
+    created_at: new Date(),
+    updated_at: new Date()
+  };
+  let parsed = null;
+  const db = {
+    async query(sql, params) {
+      if (sql.includes('FROM blockchain_transactions') && sql.includes('WHERE signature = $1')) {
+        return { rows: [existing], rowCount: 1 };
+      }
+      if (sql.includes('FROM wallet_accounts WHERE public_key')) {
+        return { rows: [account], rowCount: 1 };
+      }
+      if (sql.includes('FROM hd_wallets WHERE id')) {
+        return { rows: [root], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE blockchain_transactions')) {
+        existing.status = params[1];
+        existing.commitment = params[2] ?? existing.commitment;
+        existing.slot = params[3] ?? existing.slot;
+        existing.block_time = params[4] ?? existing.block_time;
+        existing.failure_reason = params[7] ? null : (params[5] ?? existing.failure_reason);
+        if (params[6]) existing.metadata = { ...existing.metadata, ...JSON.parse(params[6]) };
+        return { rows: [existing], rowCount: 1 };
+      }
+      throw new Error('Unexpected database query: ' + sql);
+    }
+  };
+  const rpc = {
+    async getParsedTransaction() { return parsed; },
+    async getSignatureStatuses() {
+      return { value: [{ confirmationStatus: 'finalized', confirmations: null, err: null }] };
+    },
+    extractIncomingTransfers() { return [transfer()]; }
+  };
+  const service = createDepositService({ db, rpc, network: 'devnet', commitment: 'confirmed' });
+
+  const missing = await service.refreshDeposit(signature, destination);
+  assert.equal(missing.status, 'under_review');
+  assert.match(missing.failureReason, /no longer verifiable/i);
+
+  parsed = { slot: 120, blockTime: null, meta: { err: null } };
+  const recovered = await service.refreshDeposit(signature, destination);
+  assert.equal(recovered.status, 'credited');
+  assert.equal(recovered.failureReason, null);
+  assert.equal(recovered.metadata.chainVerification, 'present');
+});
