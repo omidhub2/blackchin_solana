@@ -51,6 +51,7 @@ export function createDepositScannerWorker({
   let backoffMs = minBackoffMs;
   let lockClient = null;
   let lock = null;
+  let lockLost = false;
   let consecutiveFailures = 0;
 
   const stats = {
@@ -65,6 +66,35 @@ export function createDepositScannerWorker({
     lastErrorMessage: null,
     consecutiveFailures: 0
   };
+
+  function invalidateLock(error) {
+    if (lockLost) return;
+    lockLost = true;
+    lock = null;
+    log('scanner.lock_lost', { network, scope, message: error?.message ?? 'lock connection ended' });
+  }
+
+  async function assertOwnership() {
+    if (lockLost || !lock || !lockClient) {
+      const error = new Error('Worker no longer owns its PostgreSQL advisory lock');
+      error.code = 'WORKER_LOCK_LOST';
+      throw error;
+    }
+    try {
+      await lockClient.query('SELECT 1');
+    } catch (cause) {
+      invalidateLock(cause);
+      const error = new Error('Worker advisory-lock connection is no longer usable');
+      error.code = 'WORKER_LOCK_LOST';
+      error.cause = cause;
+      throw error;
+    }
+    if (lockLost) {
+      const error = new Error('Worker advisory lock was lost');
+      error.code = 'WORKER_LOCK_LOST';
+      throw error;
+    }
+  }
 
   function nextDelayMs() {
     return consecutiveFailures > 0 ? backoffMs : intervalMs;
@@ -93,6 +123,7 @@ export function createDepositScannerWorker({
     if (state !== 'running') return { skipped: 'not_running' };
 
     if (!lock) {
+      lockLost = false;
       // (Re)acquire ownership. Without it this instance must not scan, so two
       // replicas can never double-process the same cursor.
       const candidate = await pool.connect();
@@ -115,6 +146,8 @@ export function createDepositScannerWorker({
       }
 
       lockClient = candidate;
+      candidate.on?.('error', invalidateLock);
+      candidate.on?.('end', () => invalidateLock(new Error('PostgreSQL lock connection ended')));
       log('scanner.lock_acquired', { network, scope });
     }
 
@@ -122,7 +155,8 @@ export function createDepositScannerWorker({
     stats.lastRunAt = new Date(now()).toISOString();
 
     try {
-      const summary = await scanner.scan({ network, scope });
+      await assertOwnership();
+      const summary = await scanner.scan({ network, scope, assertOwnership });
 
       stats.successes += 1;
       stats.lastSuccessAt = stats.lastRunAt;
