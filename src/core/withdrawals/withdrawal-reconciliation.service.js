@@ -299,7 +299,7 @@ export function createWithdrawalReconciliationService({
           else await updateTransactionStatusForTenant(client, candidate.tenant_id, existing.id, updateInput);
         }
       } else {
-        await insertBlockchainTransaction(client, {
+        const inserted = await insertBlockchainTransaction(client, {
           signature,
           direction: 'withdrawal',
           walletPublicKey: candidate.wallet_public_key,
@@ -320,6 +320,9 @@ export function createWithdrawalReconciliationService({
             reconciliation: 'finalized_success'
           }
         });
+        if (candidate.tenant_id != null && !inserted.created) {
+          throw new Error('Withdrawal signature already exists outside this tenant ledger scope');
+        }
       }
 
       const completed = await client.query(
