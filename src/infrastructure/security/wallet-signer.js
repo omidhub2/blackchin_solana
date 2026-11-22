@@ -7,6 +7,7 @@ import {
 } from '../../blockchain/solana/hd/derivation.js';
 import { getDefaultCipher } from './hd-envelope.js';
 import { findAccountByPublicKey } from '../database/wallet-account.repository.js';
+import { findAccountByPublicKeyForTenant } from '../database/tenant-wallet.repository.js';
 import { findHdWalletById } from '../database/hd-wallet.repository.js';
 import { findWalletMetadataByPublicKey } from '../database/wallet.repository.js';
 import {
@@ -115,12 +116,17 @@ export async function requireWallet(db, publicKey) {
  */
 export async function loadSigningKeypairLocked(
   db,
-  { publicKey, deploymentNetwork },
+  { publicKey, deploymentNetwork, tenantId = null },
   { cipher = getDefaultCipher() } = {}
 ) {
-  const account = await findAccountByPublicKey(db, publicKey);
+  const account = tenantId === null
+    ? await findAccountByPublicKey(db, publicKey)
+    : await findAccountByPublicKeyForTenant(db, tenantId, publicKey);
 
   if (!account) {
+    if (tenantId !== null) {
+      throw notFound('Wallet account was not found for this tenant', 'WALLET_ACCOUNT_NOT_FOUND');
+    }
     return { kind: 'standalone' };
   }
 
@@ -132,7 +138,8 @@ export async function loadSigningKeypairLocked(
 
     const { accountRow, parentRow } = await lockRowsForSigning(client, {
       accountId: account.id,
-      hdWalletId: account.hdWalletId
+      hdWalletId: account.hdWalletId,
+      tenantId
     });
 
     const lockedChild = {
@@ -141,16 +148,27 @@ export async function loadSigningKeypairLocked(
       publicKey: accountRow?.public_key,
       accountIndex: Number(accountRow?.account_index),
       derivationPath: accountRow?.derivation_path,
-      network: accountRow?.network
+      network: accountRow?.network,
+      tenantId: accountRow?.tenant_id === null || accountRow?.tenant_id === undefined
+        ? null : String(accountRow.tenant_id)
     };
 
     const lockedParent = parentRow
       ? {
         id: String(parentRow.id),
         status: parentRow.status,
-        network: parentRow.network
+        network: parentRow.network,
+        tenantId: parentRow.tenant_id === null || parentRow.tenant_id === undefined
+          ? null : String(parentRow.tenant_id)
       }
       : null;
+
+    if (tenantId !== null && (
+      lockedChild.tenantId !== String(tenantId) ||
+      lockedParent?.tenantId !== String(tenantId)
+    )) {
+      throw notFound('Wallet account was not found for this tenant', 'WALLET_ACCOUNT_NOT_FOUND');
+    }
 
     assertChildAllowsSigning(lockedChild);
     assertParentAllowsSigning(lockedParent);
@@ -316,6 +334,42 @@ export function zeroizeKeypair(keypair) {
  * @param {(ctx: { keypair: Keypair, wallet: object }) => Promise<T>} callback
  * @param {{ cipher?: object, deploymentNetwork?: string }} [options]
  */
+/**
+ * Tenant-scoped signing callback. Both the HD child and root are resolved and
+ * locked with the authenticated tenant id; legacy standalone wallets are not
+ * considered by this entry point.
+ */
+export async function withTenantSigningKey(
+  db,
+  tenantId,
+  publicKey,
+  callback,
+  { cipher, deploymentNetwork } = {}
+) {
+  if (
+    (typeof tenantId !== 'string' && typeof tenantId !== 'number' && typeof tenantId !== 'bigint') ||
+    !/^[1-9][0-9]*$/.test(String(tenantId))
+  ) {
+    throw new TypeError('tenantId must be a positive integer');
+  }
+  if (typeof callback !== 'function') throw new TypeError('A signing callback is required');
+
+  const resolved = await loadSigningKeypairLocked(
+    db,
+    { publicKey, deploymentNetwork, tenantId: String(tenantId) },
+    { cipher }
+  );
+  if (resolved.kind !== 'hd_child') {
+    throw notFound('Wallet account was not found for this tenant', 'WALLET_ACCOUNT_NOT_FOUND');
+  }
+
+  try {
+    return await callback({ keypair: resolved.keypair, wallet: resolved.wallet });
+  } finally {
+    zeroizeKeypair(resolved.keypair);
+  }
+}
+
 export async function withSigningKey(db, publicKey, callback, { cipher, deploymentNetwork } = {}) {
   if (typeof callback !== 'function') {
     throw new TypeError('A signing callback is required');
