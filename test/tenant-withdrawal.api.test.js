@@ -12,7 +12,7 @@ function harness(scopes = ['withdrawals:estimate', 'withdrawals:write']) {
   const calls = [];
   const db = {
     async query(sql) {
-      if (String(sql).includes('INSERT INTO rate_limit_counters')) return { rowCount: 1, rows: [{ hit_count: 1, window_ends_at: new Date(Date.now() + 60_000) }] };
+      if (String(sql).toLowerCase().includes('rate_limit_counters')) return { rowCount: 1, rows: [{ hit_count: '1', window_ends_at: new Date(Date.now() + 60_000).toISOString() }] };
       if (String(sql).startsWith('SELECT')) return {
         rowCount: 1,
         rows: [{
