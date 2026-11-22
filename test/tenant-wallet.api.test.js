@@ -47,6 +47,7 @@ function makeServices({ tenantId = '41', scopes } = {}) {
     async getAccountAtIndex(...args) { calls.push(['getAccountAtIndex', ...args]); return {}; }
   };
   const deposits = {
+    async getMonitoringForTenant(...args) { calls.push(['getMonitoringForTenant', ...args]); return []; },
     async listForTenant(...args) { calls.push(['listForTenant', ...args]); return []; },
     async getForTenant(...args) { calls.push(['getForTenant', ...args]); return { signature: args[1], tenantId: args[0] }; }
   };
@@ -134,6 +135,21 @@ test('tenant deposit detail lookup cannot omit authenticated tenant scope', asyn
     });
     assert.equal(response.statusCode, 200);
     assert.deepEqual(fake.calls[0], ['getForTenant', '99', signature]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('tenant deposit monitoring is scoped to the authenticated tenant', async () => {
+  const fake = makeServices({ tenantId: '123', scopes: ['deposits:read'] });
+  const app = buildServer({ logger: false, services: fake.services });
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/tenant/monitoring/deposits',
+      headers: { 'x-api-key': fake.apiKey }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(fake.calls[0], ['getMonitoringForTenant', '123']);
   } finally {
     await app.close();
   }
