@@ -11,7 +11,6 @@
 import { AppError, conflict, notFound, serviceUnavailable } from '../errors.js';
 import {
   TRANSACTION_STATUSES,
-  findTransactionBySignature,
   findTransactionBySignatureForTenant,
   findUnassignedDepositBySignature,
   listDepositsBySignatureForTenant,
