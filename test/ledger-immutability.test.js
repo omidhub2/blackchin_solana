@@ -149,24 +149,24 @@ test('the application never deletes ledger rows or binds identity columns', asyn
   ];
 
   for (const functionName of updateFunctions) {
-    const functionStart = repository.indexOf(\`export async function \${functionName}\`);
-    assert.notEqual(functionStart, -1, \`missing lifecycle updater: \${functionName}\`);
+    const functionStart = repository.indexOf(`export async function ${functionName}`);
+    assert.notEqual(functionStart, -1, `missing lifecycle updater: ${functionName}`);
 
     const nextFunction = repository.indexOf('export async function ', functionStart + 1);
     const functionBody = repository.slice(functionStart, nextFunction === -1 ? undefined : nextFunction);
     const updateSites = functionBody.match(/UPDATE\s+blockchain_transactions/gi) ?? [];
-    assert.equal(updateSites.length, 1, \`\${functionName} must contain exactly one ledger UPDATE\`);
+    assert.equal(updateSites.length, 1, `${functionName} must contain exactly one ledger UPDATE`);
 
     const sqlStart = functionBody.indexOf('UPDATE blockchain_transactions');
-    const sqlEnd = functionBody.indexOf('\`', sqlStart);
+    const sqlEnd = functionBody.indexOf('`', sqlStart);
     const statement = functionBody.slice(sqlStart, sqlEnd === -1 ? undefined : sqlEnd);
 
     assert.match(statement, /SET[\s\S]*WHERE/i);
     for (const column of IDENTITY_COLUMNS) {
       assert.doesNotMatch(
         statement,
-        new RegExp(\`(?:SET|,)\\s*\${column}\\s*=\`, 'i'),
-        \`\${functionName} must not assign immutable column \${column}\`
+        new RegExp(`(?:SET|,)\\s*${column}\\s*=`, 'i'),
+        `${functionName} must not assign immutable column ${column}`
       );
     }
   }
