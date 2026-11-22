@@ -295,7 +295,7 @@ test('0012 creates fail-closed tenant withdrawal policy, approval and append-onl
     'utf8'
   );
   assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_withdrawal_policies/i);
-  assert.match(sql, /RETURNS TRIGGER AS \\$policy\\$/i);
+  assert.match(sql, /RETURNS TRIGGER AS \$policy\$/i);
   assert.match(sql, /enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
   assert.match(sql, /emergency_frozen BOOLEAN NOT NULL DEFAULT TRUE/i);
   assert.match(sql, /max_daily_lamports NUMERIC\(30, 0\)/i);
