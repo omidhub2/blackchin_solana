@@ -43,6 +43,16 @@ const MAX_BATCH_SIZE = 50;
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
 
+function assertTenantContext(tenantId) {
+  if (
+    (typeof tenantId !== 'string' && typeof tenantId !== 'number' && typeof tenantId !== 'bigint') ||
+    !/^[1-9][0-9]*$/.test(String(tenantId))
+  ) {
+    throw new TypeError('tenantId must be a positive integer');
+  }
+  return String(tenantId);
+}
+
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -108,6 +118,7 @@ export function createTenantWalletService({
 
   return Object.freeze({
     async createHdWallet({ tenantId, label = null, ownerId = null } = {}) {
+      tenantId = assertTenantContext(tenantId);
       const mnemonic = generateHdMnemonic(256);
       const client = await db.connect();
       try {
@@ -214,6 +225,7 @@ export function createTenantWalletService({
     },
 
     async createAccounts(tenantId, hdWalletId, { count = 1 } = {}) {
+      tenantId = assertTenantContext(tenantId);
       if (!Number.isSafeInteger(count) || count < 1 || count > MAX_BATCH_SIZE) {
         throw conflict(`count must be an integer between 1 and ${MAX_BATCH_SIZE}`, 'INVALID_BATCH_SIZE');
       }
