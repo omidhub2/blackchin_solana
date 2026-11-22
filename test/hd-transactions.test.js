@@ -89,6 +89,7 @@ function buildWithdrawalHarness() {
   });
 
   const pool = basePool(memory);
+  pool.onQuery('FROM wallets', () => ({ rows: [], rowCount: 0 }));
   const idempotency = new Map();
   const transactions = [];
   let failIdempotencyWrites = false;
@@ -605,6 +606,7 @@ function depositHarness({ parsed, status }) {
   });
 
   const pool = basePool(memory);
+  pool.onQuery('FROM wallets', () => ({ rows: [], rowCount: 0 }));
   const rows = [];
 
   pool.onQuery('FROM blockchain_transactions', (params) => {
