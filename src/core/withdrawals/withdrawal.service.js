@@ -91,7 +91,9 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       `
         UPDATE api_idempotency_keys
         SET status = 'failed', updated_at = NOW()
-        WHERE idempotency_key = $1 AND status = 'processing'
+        WHERE idempotency_key = $1
+          AND status = 'processing'
+          AND transaction_signature IS NULL
       `,
       [idempotencyKey]
     );
