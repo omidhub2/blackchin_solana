@@ -4,7 +4,6 @@
  * These functions deliberately require tenantId. They never fall back to
  * legacy rows whose tenant_id is NULL.
  */
-import { mapHdWallet } from './hd-wallet.repository.js';
 import { mapWalletAccount, ACCOUNT_STATUSES } from './wallet-account.repository.js';
 
 function assertTenantId(tenantId) {
@@ -18,6 +17,21 @@ function assertTenantId(tenantId) {
   return String(tenantId);
 }
 
+function mapTenantHdWallet(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id), ownerId: row.owner_id, label: row.label, network: row.network,
+    derivationScheme: row.derivation_scheme, derivationPathTemplate: row.derivation_path_template,
+    nextAccountIndex: Number(row.next_account_index), status: row.status,
+    phraseProvisionedAt: row.phrase_provisioned_at,
+    recoveryTokenHash: row.recovery_token_hash ?? null,
+    recoveryTokenExpiresAt: row.recovery_token_expires_at ?? null,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+    encryptionKeyVersion: row.encryption_key_version,
+    mnemonicEncrypted: row.mnemonic_encrypted, mnemonicIv: row.mnemonic_iv,
+    mnemonicAuthTag: row.mnemonic_auth_tag
+  };
+}
 export async function findHdWalletByIdForTenant(db, tenantId, hdWalletId) {
   const tenant = assertTenantId(tenantId);
   const result = await db.query(
@@ -32,7 +46,7 @@ export async function findHdWalletByIdForTenant(db, tenantId, hdWalletId) {
     [tenant, hdWalletId]
   );
 
-  return mapHdWallet(result.rows[0]);
+  return mapTenantHdWallet(result.rows[0]);
 }
 
 export async function findAccountByIdForTenant(db, tenantId, accountId) {
