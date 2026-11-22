@@ -370,7 +370,7 @@ export function createDepositScanner({
 
             if (walletSignaturesScanned >= maxBatch) {
               await assertOwnership();
-          await cursors.saveBackfillProgress(db, cursor.id, {
+              await cursors.saveBackfillProgress(db, cursor.id, {
                 anchorSignature,
                 beforeSignature: before,
                 highWaterSignature,
@@ -387,6 +387,7 @@ export function createDepositScanner({
           if (pageFailure) {
             // Keep any previously persisted continuation unchanged. If this
             // was the first page, a retry safely replays it idempotently.
+            await assertOwnership();
             await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
             summary.cursors.push({
               address: wallet.publicKey,
@@ -430,6 +431,7 @@ export function createDepositScanner({
             });
           } else if (!highWaterSignature) {
             // No new signatures and no pending continuation.
+            await assertOwnership();
             await cursors.advanceCursor(db, cursor.id, {
               lastSignature: cursor.lastSignature,
               lastSlot: cursor.lastSlot,
