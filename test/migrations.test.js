@@ -263,8 +263,8 @@ test('0011 separates tenant idempotency namespaces while preserving legacy key u
   );
   assert.match(sql, /WHERE tenant_id IS NULL/i);
   assert.match(sql, /ADD COLUMN IF NOT EXISTS tenant_credential_id BIGINT/i);
-  assert.match(sql, /ADD COLUMN IF NOT EXISTS approval_reference VARCHAR\\(128\\)/i);
-  assert.match(sql, /FOREIGN KEY \\(tenant_id, tenant_credential_id\\)/i);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS approval_reference VARCHAR\(128\)/i);
+  assert.match(sql, /FOREIGN KEY \(tenant_id, tenant_credential_id\)/i);
   assert.match(sql, /ON api_idempotency_keys\(idempotency_key\)/i);
   assert.match(sql, /ON api_idempotency_keys\(tenant_id, idempotency_key\)/i);
   assert.doesNotMatch(sql, /UPDATE\s+api_idempotency_keys\s+SET\s+tenant_id/i);
