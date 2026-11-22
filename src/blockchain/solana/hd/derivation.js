@@ -144,10 +144,20 @@ export function assertSupportedDerivationPath(path, accountIndex) {
  * @returns {Buffer}
  */
 export function deriveEd25519Seed(seed, accountIndex) {
-  const master = deriveSlip10MasterKey(seed);
-  const node = deriveSlip10Path(master, deriveAccountPath(accountIndex));
+  let master;
+  let node;
 
-  return Buffer.from(node.key);
+  try {
+    master = deriveSlip10MasterKey(seed);
+    node = deriveSlip10Path(master, deriveAccountPath(accountIndex));
+
+    return Buffer.from(node.key);
+  } finally {
+    master?.key?.fill(0);
+    master?.chainCode?.fill(0);
+    node?.key?.fill(0);
+    node?.chainCode?.fill(0);
+  }
 }
 
 /**
@@ -161,13 +171,38 @@ export function deriveEd25519Seed(seed, accountIndex) {
  *             secretKey: Buffer }}
  */
 export function deriveSolanaAccount(mnemonic, accountIndex, { passphrase = '' } = {}) {
+  const seed = mnemonicToHdSeed(mnemonic, passphrase);
+
+  try {
+    return deriveSolanaAccountFromSeedBuffer(seed, accountIndex);
+  } finally {
+    seed.fill(0);
+  }
+}
+
+/**
+ * Buffer-based derivation: the preferred entry point for signing code.
+ *
+ * The caller's seed buffer is NOT zeroed (the caller owns it); every
+ * intermediate buffer created here (master key, chain codes, child seed) is
+ * zeroed before returning, including on failure.
+ */
+export function deriveSolanaAccountFromSeedBuffer(seed, accountIndex) {
   validateAccountIndex(accountIndex);
 
-  const seed = mnemonicToHdSeed(mnemonic, passphrase);
+  if (!(seed instanceof Uint8Array) || seed.length === 0) {
+    throw new TypeError('A BIP39 seed buffer is required');
+  }
+
+  let master;
+  let node;
   let childSeed;
 
   try {
-    childSeed = deriveEd25519Seed(seed, accountIndex);
+    master = deriveSlip10MasterKey(seed);
+    node = deriveSlip10Path(master, deriveAccountPath(accountIndex));
+
+    childSeed = Buffer.from(node.key);
 
     const keypair = Keypair.fromSeed(childSeed);
     const secretKey = Buffer.from(keypair.secretKey);
@@ -191,7 +226,10 @@ export function deriveSolanaAccount(mnemonic, accountIndex, { passphrase = '' } 
       secretKey
     };
   } finally {
-    seed.fill(0);
+    master?.key?.fill(0);
+    master?.chainCode?.fill(0);
+    node?.key?.fill(0);
+    node?.chainCode?.fill(0);
     childSeed?.fill(0);
   }
 }

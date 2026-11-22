@@ -43,7 +43,19 @@ function basePool(memory) {
   pool.onQuery('BEGIN', () => undefined);
   pool.onQuery('COMMIT', () => undefined);
   pool.onQuery('ROLLBACK', () => undefined);
+  pool.onQuery('lock_timeout', () => undefined);
   pool.onQuery('pg_advisory_xact_lock', () => undefined);
+
+  // Signing-path row locks.
+  pool.onQuery('FROM wallet_accounts\n      WHERE id = $1\n      FOR SHARE', (params) => {
+    const row = memory.accounts.find((item) => String(item.id) === String(params[0]));
+    return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+  });
+
+  pool.onQuery('FROM hd_wallets\n      WHERE id = $1\n      FOR SHARE', (params) => {
+    const row = memory.hdWallets.get(String(params[0]));
+    return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+  });
 
   pool.onQuery('FROM wallet_accounts WHERE public_key', (params) => {
     const row = memory.accountByPublicKey(params[0]);

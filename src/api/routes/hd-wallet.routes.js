@@ -31,10 +31,12 @@ const ACCOUNT_STATUS_VALUES = ['active', 'disabled', 'archived'];
 
 export async function hdWalletRoutes(app) {
   const services = (request) => getServices(app, request);
+  const { distributed = null } = app.config ?? {};
 
-  const createLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'hd-create' });
-  const batchLimiter = rateLimitHook({ limit: 30, windowMs: 60_000, keyPrefix: 'hd-accounts' });
-  const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'hd-recovery' });
+  // Sensitive operations: fail closed if the shared limiter store is down.
+  const createLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'hd-create', distributed });
+  const batchLimiter = rateLimitHook({ limit: 30, windowMs: 60_000, keyPrefix: 'hd-accounts', distributed });
+  const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'hd-recovery', distributed });
 
   app.post('/api/v1/hd-wallets', { preHandler: createLimiter }, async (request, reply) => {
     const body = requireObject(request.body ?? {}, 'body');

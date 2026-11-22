@@ -18,7 +18,14 @@ import { createFakePool } from './helpers/fake-pool.js';
 const KEY = 'd'.repeat(64);
 const keyProvider = createEnvKeyProvider({ ENCRYPTION_KEY: KEY });
 const cipher = createCipher(keyProvider);
+
+// The token codec is wallet-bound and wallet-agnostic for verification only
+// when the caller passes the same wallet id used at issue time.
 const tokens = createPurposeTokenCodec(keyProvider);
+
+function openToken(token, walletId) {
+  return tokens.open('recovery-phrase', token, { walletId }).payload;
+}
 
 /**
  * Fake pool implementing exactly the statements the HD wallet service issues.
@@ -52,6 +59,8 @@ function buildPool() {
       next_account_index: 0,
       status: params[9],
       phrase_provisioned_at: null,
+      recovery_token_hash: null,
+      recovery_token_expires_at: null,
       created_at: new Date(),
       updated_at: new Date()
     };
@@ -78,10 +87,37 @@ function buildPool() {
   });
 
   pool.onQuery('SET phrase_provisioned_at = NOW()', (params) => {
-    const row = rowFor(params[0]);
+    const [id, tokenHash] = params;
+    const row = rowFor(id);
+
     if (!row || row.phrase_provisioned_at !== null) return { rows: [], rowCount: 0 };
+
+    // Conditional redemption: hash must match and the token must be unexpired.
+    if (tokenHash !== undefined) {
+      if (!row.recovery_token_hash || row.recovery_token_hash !== tokenHash) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      if (!row.recovery_token_expires_at || row.recovery_token_expires_at.getTime() <= Date.now()) {
+        return { rows: [], rowCount: 0 };
+      }
+    }
+
     row.phrase_provisioned_at = new Date();
-    return { rows: [{ phrase_provisioned_at: row.phrase_provisioned_at }], rowCount: 1 };
+    row.recovery_token_hash = null;
+    row.recovery_token_expires_at = null;
+    return { rows: [{ id: row.id }], rowCount: 1 };
+  });
+
+  pool.onQuery('SET recovery_token_hash = $2,', (params) => {
+    const [id, tokenHash, expiresAt] = params;
+    const row = rowFor(id);
+
+    if (!row || row.phrase_provisioned_at !== null) return { rows: [], rowCount: 0 };
+
+    row.recovery_token_hash = tokenHash;
+    row.recovery_token_expires_at = new Date(expiresAt);
+    return { rows: [{ id: row.id }], rowCount: 1 };
   });
 
   pool.onQuery('FROM hd_wallets', (params) => {
@@ -90,6 +126,7 @@ function buildPool() {
   });
 
   pool.rows = rows;
+  pool.nowRef = undefined;
   return pool;
 }
 
@@ -134,8 +171,8 @@ test('creates an HD root with an encrypted 24-word mnemonic and one-time token',
   assert.equal(row.status, 'active');
   assert.equal(pool.sqlCalls('COMMIT').length, 1);
 
-  // Token decrypts to a valid BIP39 mnemonic.
-  const mnemonic = tokens.open('recovery-phrase', recovery.token);
+  // Token decrypts to a valid BIP39 mnemonic, bound to this wallet id.
+  const mnemonic = openToken(recovery.token, wallet.id);
   assert.equal(validateHdMnemonic(mnemonic), true);
 });
 
@@ -145,7 +182,7 @@ test('stored ciphertext is bound to the row id and never plaintext', async () =>
 
   const { wallet, recovery } = await service.createHdWallet();
   const row = pool.rows.get(wallet.id);
-  const mnemonic = tokens.open('recovery-phrase', recovery.token);
+  const mnemonic = openToken(recovery.token, wallet.id);
 
   assert.ok(!row.mnemonic_encrypted.includes(Buffer.from(mnemonic).toString('hex')));
 
@@ -196,7 +233,7 @@ test('revealMnemonicForSigning decrypts only for an existing active root', async
   const { wallet, recovery } = await service.createHdWallet();
   const mnemonic = await service.revealMnemonicForSigning(wallet.id);
 
-  assert.equal(mnemonic, tokens.open('recovery-phrase', recovery.token));
+  assert.equal(mnemonic, openToken(recovery.token, wallet.id));
 
   await assert.rejects(
     () => service.revealMnemonicForSigning('424242'),
@@ -247,15 +284,23 @@ test('a token minted for another root cannot be redeemed', async () => {
   const first = await service.createHdWallet();
   const second = await service.createHdWallet();
 
-  // The root stores the mnemonic, not the recovery token, so a foreign token
-  // cannot be validated against it by construction: every token opens to its
-  // own payload. The guarantee is instead that redemption is single-use and
-  // bound to a root that has not been provisioned yet.
-  const firstMnemonic = tokens.open('recovery-phrase', first.recovery.token);
-  const secondMnemonic = tokens.open('recovery-phrase', second.recovery.token);
+  const firstMnemonic = openToken(first.recovery.token, first.wallet.id);
+  const secondMnemonic = openToken(second.recovery.token, second.wallet.id);
 
   assert.notEqual(firstMnemonic, secondMnemonic);
 
+  // A token minted for wallet A must be rejected when presented for wallet B.
+  await assert.rejects(
+    () =>
+      service.consumeRecoveryPhrase({
+        hdWalletId: second.wallet.id,
+        token: first.recovery.token,
+        confirm: true
+      }),
+    (error) => error.code === 'INVALID_RECOVERY_TOKEN'
+  );
+
+  // The legitimate token for wallet B still works afterwards.
   const redeemed = await service.consumeRecoveryPhrase({
     hdWalletId: second.wallet.id,
     token: second.recovery.token,
@@ -280,7 +325,7 @@ test('deriveAccountPreview recovers the same addresses as direct derivation', as
   const service = buildService(pool);
 
   const { wallet, recovery } = await service.createHdWallet();
-  const mnemonic = tokens.open('recovery-phrase', recovery.token);
+  const mnemonic = openToken(recovery.token, wallet.id);
 
   for (const index of [0, 1, 7]) {
     const preview = await service.deriveAccountPreview(wallet.id, index);

@@ -17,6 +17,41 @@ const ACCOUNT_COLUMNS = `
   updated_at
 `;
 
+export const DEFAULT_SCAN_PAGE_SIZE = 500;
+export const MAX_SCAN_ACCOUNTS = 5_000;
+
+/**
+ * Watch-list for the deposit scanner.
+ *
+ * Only ACTIVE HD children are watched (a disabled/archived wallet is not
+ * expected to receive credited deposits). Legacy standalone wallets are
+ * reported separately by `listLegacyWatchAddresses`.
+ *
+ * @param {object} db
+ * @param {string} network Deployment network; rows of another network never
+ *   enter the watch list.
+ * @returns {Promise<Array<{publicKey: string, hdWalletId: string}>>}
+ */
+export async function listActiveWatchedWallets(db, network, { hdWalletId = null, limit = MAX_SCAN_ACCOUNTS } = {}) {
+  const result = await db.query(
+    `
+      SELECT public_key, hd_wallet_id
+      FROM wallet_accounts
+      WHERE network = $1
+        AND status = 'active'
+        AND ($3::bigint IS NULL OR hd_wallet_id = $3)
+      ORDER BY hd_wallet_id ASC, account_index ASC
+      LIMIT $2
+    `,
+    [network, Math.min(limit, MAX_SCAN_ACCOUNTS), hdWalletId]
+  );
+
+  return result.rows.map((row) => ({
+    publicKey: row.public_key,
+    hdWalletId: String(row.hd_wallet_id)
+  }));
+}
+
 export const ACCOUNT_STATUSES = Object.freeze(['active', 'disabled', 'archived']);
 
 export function mapWalletAccount(row) {

@@ -115,12 +115,34 @@ export function parseHardenedPath(path) {
 export function deriveSlip10Path(masterNode, path) {
   const indices = parseHardenedPath(path);
   let node = masterNode;
+  let owned = [];
 
-  for (const index of indices) {
-    node = deriveSlip10ChildKey(node, index);
+  try {
+    for (const index of indices) {
+      const next = deriveSlip10ChildKey(node, index);
+
+      // Intermediate nodes are owned by this function and wiped as soon as
+      // the next level exists. The caller's master node is never touched.
+      for (const previous of owned) {
+        previous.key.fill(0);
+        previous.chainCode.fill(0);
+      }
+
+      owned = [];
+      if (next !== masterNode) owned.push(next);
+      node = next;
+    }
+
+    owned = [];
+    return node;
+  } catch (error) {
+    for (const held of owned) {
+      held.key.fill(0);
+      held.chainCode.fill(0);
+    }
+
+    throw error;
   }
-
-  return node;
 }
 
 export const SLIP10_HARDENED_OFFSET = HARDENED_OFFSET;

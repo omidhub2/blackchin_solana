@@ -39,14 +39,32 @@ Creating a root returns a **one-time recovery token**:
 ```
 
 The token is the mnemonic sealed with a *purpose-derived* sub-key
-(`HMAC-SHA256(masterKey, "blackchin:recovery-phrase:v1")`), so token ciphertext
+(`HMAC-SHA256(masterKey, "blackchin:recovery-phrase:v2")`), so token ciphertext
 can never be mistaken for the stored root ciphertext (different key **and**
-different AEAD AAD). It is never persisted.
+different AEAD AAD). The AAD additionally binds the purpose, the wallet id, the
+issue time, the expiry and a random `jti`, so a token minted for one root cannot
+authenticate against another.
+
+Persistence rules:
+
+- The **plaintext token is never stored** (and never logged); only the token's
+  SHA-256 hash (`recovery_token_hash`) and its server-side expiry
+  (`recovery_token_expires_at`) are written to `hd_wallets`, inside the same
+  transaction that creates the root.
+- The token is returned only after that write succeeded; if the write does not
+  affect exactly one row the transaction is rolled back and no token is
+  returned.
+- Redemption is a single conditional `UPDATE` that matches on the stored hash,
+  an un-provisioned row and a not-yet-expired `recovery_token_expires_at`.
+  Concurrent redemptions therefore produce exactly one winner.
+- On successful redemption both `recovery_token_hash` and
+  `recovery_token_expires_at` are cleared together with
+  `phrase_provisioned_at` being set, so the token is dead permanently.
 
 `POST /api/v1/hd-wallets/:id/recovery-phrase/consume` with `{ "confirm": true }`
-opens it exactly once and sets `phrase_provisioned_at`. After that the phrase
-can never be retrieved through the API again. Operators must store it offline
-before closing the provisioning window.
+redeems it exactly once. After that the phrase can never be retrieved through
+the API again. Operators must store it offline before closing the provisioning
+window.
 
 ## 3. Mnemonic and derivation scheme
 

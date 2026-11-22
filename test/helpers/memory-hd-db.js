@@ -31,6 +31,8 @@ export class MemoryHdDatabase {
       next_account_index: 0,
       status,
       phrase_provisioned_at: null,
+      recovery_token_hash: null,
+      recovery_token_expires_at: null,
       created_at: new Date(),
       updated_at: new Date()
     };

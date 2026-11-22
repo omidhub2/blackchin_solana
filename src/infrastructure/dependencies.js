@@ -4,6 +4,8 @@
  * Everything the HD services need (pool, cipher, network, RPC functions) is
  * injected so unit tests can run without PostgreSQL or Solana RPC.
  */
+import { PublicKey } from '@solana/web3.js';
+
 import { connection, solanaNetwork, commitment as defaultCommitment } from '../../config/connection.js';
 import { pool } from '../../PostgreSQL/walletStorage.js';
 import * as solana from '../../Solana/solTransfer.js';
@@ -20,6 +22,16 @@ export const solanaRpc = Object.freeze({
   estimateTransfer: (input) => solana.estimateSolTransfer(input),
   getSignatureStatuses: (signatures) =>
     connection.getSignatureStatuses(signatures, { searchTransactionHistory: true }),
+  getRecentSignatures: (address, { limit = 25, until, before } = {}) =>
+    connection.getSignaturesForAddress(
+      new PublicKey(address),
+      {
+        limit,
+        ...(until ? { until } : {}),
+        ...(before ? { before } : {})
+      },
+      defaultCommitment
+    ),
   getParsedTransaction: (signature, commitment) =>
     connection.getParsedTransaction(signature, {
       commitment: commitment ?? defaultCommitment,

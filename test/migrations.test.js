@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 
 import {
   calculateChecksum,
@@ -156,4 +157,36 @@ test('runs each migration and its history insert in one transaction', async () =
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+test('hardening migrations parse into ordered, checksummed versions', async () => {
+  const files = await loadMigrationFiles();
+  const versions = files.map((file) => file.version);
+
+  assert.ok(versions.includes('0004'));
+  assert.ok(versions.includes('0005'));
+  assert.equal(new Set(versions).size, versions.length);
+  assert.deepEqual(versions, [...versions].sort());
+
+  for (const file of files) {
+    assert.match(file.checksum, /^[a-f0-9]{64}$/);
+  }
+});
+
+test('0005 ledger immutability is additive and re-runnable', async () => {
+  const sql = await readFile(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      'migrations',
+      '0005_ledger_immutability.sql'
+    ),
+    'utf8'
+  );
+
+  assert.doesNotMatch(sql, /DROP TABLE/i);
+  assert.doesNotMatch(sql, /TRUNCATE/i);
+  assert.doesNotMatch(sql, /ALTER TABLE[\s\S]*DROP COLUMN/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION/i);
+  assert.match(sql, /DROP TRIGGER IF EXISTS/i);
+  assert.match(sql, /CREATE TRIGGER trg_blockchain_transactions_no_delete/i);
 });

@@ -16,12 +16,29 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('API_PORT must be a valid TCP port');
 }
 
+const scannerEnabled = process.env.DEPOSIT_SCANNER_ENABLED === 'true';
+const scannerNetwork = process.env.SOLANA_NETWORK || 'devnet';
+const scannerScope = process.env.DEPOSIT_SCANNER_SCOPE || 'all';
+const scannerIntervalMs = Number(process.env.DEPOSIT_SCANNER_INTERVAL_MS || 15_000);
+
+if (!Number.isSafeInteger(scannerIntervalMs) || scannerIntervalMs < 1_000) {
+  throw new Error('DEPOSIT_SCANNER_INTERVAL_MS must be an integer >= 1000');
+}
+
 let server;
+let worker;
+let shuttingDown = false;
 
 async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
   console.log(`Received ${signal}; shutting down wallet API...`);
 
   try {
+    // Stop background work first so no scan writes after the pool starts
+    // draining, then close HTTP, then the pool.
+    if (worker) await worker.stop();
     if (server) await server.close();
     await disconnectPostgres();
     process.exitCode = 0;
@@ -39,17 +56,49 @@ try {
   await pool.query('SELECT next_account_index FROM hd_wallets LIMIT 0');
   await pool.query('SELECT account_index FROM wallet_accounts LIMIT 0');
   await pool.query('SELECT direction FROM blockchain_transactions LIMIT 0');
+  await pool.query('SELECT last_signature FROM deposit_scanner_cursors LIMIT 0');
+  await pool.query('SELECT event_id FROM webhook_outbox LIMIT 0');
+  await pool.query('SELECT bucket_key FROM rate_limit_counters LIMIT 0');
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
   const { createServices } = await import('./core/services.js');
+  const { createDepositScannerWorker } = await import('./workers/deposit-scanner.worker.js');
+  const { createHealthService } = await import('./core/health.service.js');
 
   // Creating services validates ENCRYPTION_KEY and fails closed before the
   // port is opened.
   const services = createServices({ pool });
 
-  server = buildServer({ services });
+  if (scannerEnabled) {
+    worker = createDepositScannerWorker({
+      scanner: services.depositScanner,
+      cursors: services.deps.cursors,
+      pool,
+      network: scannerNetwork,
+      scope: scannerScope,
+      intervalMs: scannerIntervalMs,
+      log: (message, meta) => console.log(JSON.stringify({ time: new Date().toISOString(), message, ...meta }))
+    });
+  }
+
+  const health = createHealthService({
+    pool,
+    scanner: worker,
+    workerEnabled: scannerEnabled,
+    network: scannerNetwork,
+    scope: scannerScope
+  });
+
+  server = buildServer({ services, health });
   await server.listen({ host, port });
+
+  if (worker) {
+    await worker.start();
+    console.log(`Deposit scanner started (network=${scannerNetwork}, scope=${scannerScope})`);
+  } else {
+    console.log('Deposit scanner disabled (DEPOSIT_SCANNER_ENABLED is not "true")');
+  }
 
   console.log(`Wallet API listening on http://${host}:${port}`);
 } catch (error) {

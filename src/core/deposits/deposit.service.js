@@ -10,6 +10,7 @@
  */
 import { AppError, conflict, notFound, serviceUnavailable } from '../errors.js';
 import {
+  TRANSACTION_STATUSES,
   findTransactionBySignature,
   insertBlockchainTransaction,
   updateTransactionStatus
@@ -146,6 +147,71 @@ export function createDepositService({ db, rpc, network, commitment }) {
         depositAddress: publicKey,
         memo: 'Send native SOL only. SPL token transfers are not credited.'
       };
+    },
+
+    /**
+     * Cheap existence check used by the scanner before any RPC call.
+     */
+    async isRecorded(signature, publicKey) {
+      const existing = await findTransactionBySignature(db, signature, publicKey, 'deposit');
+      return existing !== null;
+    },
+
+    /**
+     * Persist an already-verified deposit (used by the scanner).
+     *
+     * Trust boundary: the scanner fetched and parsed the transaction and matched
+     * the destination itself; this method only enforces idempotency and status
+     * validation. It never fabricates a transfer.
+     */
+    async recordVerifiedDeposit({
+      signature,
+      publicKey,
+      hdWalletId = null,
+      from = null,
+      lamports,
+      transfers = [],
+      commitment: entryCommitment = null,
+      status,
+      slot = null,
+      blockTime = null,
+      fingerprint = null
+    }) {
+      if (typeof signature !== 'string' || signature.length === 0) {
+        throw conflict('A transaction signature is required', 'INVALID_REQUEST');
+      }
+
+      if (typeof publicKey !== 'string' || publicKey.length === 0) {
+        throw conflict('A wallet public key is required', 'INVALID_REQUEST');
+      }
+
+      if (!/^\d+$/.test(String(lamports)) || BigInt(lamports) <= 0n) {
+        throw conflict('A positive integer lamport amount is required', 'INVALID_AMOUNT');
+      }
+
+      if (!TRANSACTION_STATUSES.includes(status)) {
+        throw conflict('Unsupported deposit status', 'INVALID_STATUS');
+      }
+
+      return insertBlockchainTransaction(db, {
+        signature,
+        direction: 'deposit',
+        walletPublicKey: publicKey,
+        hdWalletId,
+        counterparty: from,
+        amountLamports: String(lamports),
+        network,
+        commitment: entryCommitment ?? commitment,
+        status,
+        slot,
+        blockTime,
+        metadata: {
+          transfers,
+          fingerprint,
+          source: 'deposit-scanner',
+          walletType: hdWalletId ? 'hd_child' : 'standalone'
+        }
+      });
     },
 
     /**

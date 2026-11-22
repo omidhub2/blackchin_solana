@@ -7,6 +7,8 @@ Migrations are applied with `npm run db:migrate` (see `OPERATIONS.md`).
 | 0001 | `0001_wallets.sql` | legacy standalone wallets (unchanged) |
 | 0002 | `0002_api_idempotency.sql` | idempotency reservations (unchanged) |
 | 0003 | `0003_hd_wallets.sql` | HD roots, child accounts, ledger, idempotency columns |
+| 0004 | `0004_hardening.sql` | recovery-token hash/expiry, scanner cursors, webhook outbox, shared rate limiting, ledger UPDATE trigger |
+| 0005 | `0005_ledger_immutability.sql` | re-installs the ledger UPDATE trigger and adds a DELETE guard |
 
 ## `wallets` (legacy, unchanged)
 
@@ -33,6 +35,8 @@ Migrations are applied with `npm run db:migrate` (see `OPERATIONS.md`).
 | `next_account_index` | `BIGINT CHECK >= 0` | allocation counter |
 | `status` | `TEXT CHECK` | `active` \| `provisioning` \| `disabled` \| `archived` |
 | `phrase_provisioned_at` | `TIMESTAMPTZ NULL` | set once when the phrase was revealed |
+| `recovery_token_hash` | `CHAR(64) NULL` | SHA-256 of the issued token (plaintext never stored); cleared on redemption |
+| `recovery_token_expires_at` | `TIMESTAMPTZ NULL` | server-side expiry enforced by redemption; cleared on redemption |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | |
 
 Indexes: `idx_hd_wallets_owner_id`, `idx_hd_wallets_status`.
@@ -58,6 +62,25 @@ Indexes: `idx_wallet_accounts_hd_wallet_id`, `idx_wallet_accounts_public_key`.
 Immutable ledger. The identifying columns (`signature`, `wallet_public_key`,
 `direction`) and the recorded amounts are never updated; only lifecycle status
 and confirmation metadata advance.
+
+Enforcement (migrations 0004 + 0005), so this is a database rule and not only a
+code convention:
+
+- `trg_blockchain_transactions_immutable` (BEFORE UPDATE) raises
+  `check_violation` if `signature`, `direction`, `wallet_public_key`,
+  `amount_lamports`, `fee_lamports` or `network` change.
+- `trg_blockchain_transactions_no_delete` (BEFORE DELETE) raises
+  `check_violation` for every delete; corrections must be recorded as a
+  compensating event rather than by removing history.
+- `status`, `commitment`, `slot`, `block_time`, `failure_reason` and `metadata`
+  **stay updatable**, which is what legitimate confirmation progression uses
+  (`updateTransactionStatus`).
+
+Limits: a PostgreSQL role that owns the table can disable a trigger, and a
+superuser can always bypass rules. The guarantee holds for the application role
+when it is a non-owner DML role (recommended). Physical retention deletes, if
+ever required, must be an explicit, logged maintenance operation, not an
+application code path.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -89,6 +112,12 @@ all added with `ADD COLUMN IF NOT EXISTS`.
 
 - 0003 is purely additive (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT
   EXISTS`); it never rewrites, deletes or converts existing wallet rows.
+- 0004 adds columns with `ADD COLUMN IF NOT EXISTS` and creates new tables with
+  `CREATE TABLE IF NOT EXISTS`; the trigger is installed with
+  `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`, so it is re-runnable.
+- 0005 re-installs the same UPDATE trigger (`CREATE OR REPLACE FUNCTION` + drop/
+  create) and adds the DELETE guard; also re-runnable and non-destructive.
+- Both run inside the migration runner's single transaction per file.
 - Legacy wallets are **not** migrated into the HD hierarchy; they keep signing
   from their own encrypted secret key.
 - Applied migrations are checksum-verified; editing one aborts the runner.

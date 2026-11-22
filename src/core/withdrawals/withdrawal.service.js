@@ -108,7 +108,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         throw notFound('Sender wallet was not found in the wallet database', 'WALLET_NOT_FOUND');
       }
 
-      if (wallet.status !== 'active') {
+      if (wallet.effectiveStatus !== 'active') {
         throw conflict('Wallet is not active and cannot send funds', 'WALLET_NOT_ACTIVE');
       }
 
@@ -151,8 +151,15 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         throw notFound('Sender wallet was not found in the wallet database', 'WALLET_NOT_FOUND');
       }
 
-      if (wallet.status !== 'active') {
-        throw conflict('Wallet is not active and cannot send funds', 'WALLET_NOT_ACTIVE');
+      if (wallet.effectiveStatus !== 'active') {
+        throw conflict(
+          wallet.walletType === 'hd_child' && wallet.status === 'active'
+            ? `Parent HD wallet is ${wallet.parentStatus}; signing denied`
+            : 'Wallet is not active and cannot send funds',
+          wallet.walletType === 'hd_child' && wallet.status === 'active'
+            ? 'HD_WALLET_NOT_ACTIVE'
+            : 'WALLET_NOT_ACTIVE'
+        );
       }
 
       if (wallet.network && wallet.network !== network) {
@@ -183,7 +190,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
             amountSol,
             getKeypair: () => keypair,
             commitment
-          }), { cipher }
+          }), { cipher, deploymentNetwork: network }
         );
       } catch (error) {
         await failReservation(idempotencyKey);

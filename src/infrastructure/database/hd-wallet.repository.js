@@ -19,6 +19,8 @@ const HD_WALLET_COLUMNS = `
   next_account_index,
   status,
   phrase_provisioned_at,
+  recovery_token_hash,
+  recovery_token_expires_at,
   created_at,
   updated_at
 `;
@@ -38,6 +40,8 @@ function mapHdWallet(row) {
     nextAccountIndex: Number(row.next_account_index),
     status: row.status,
     phraseProvisionedAt: row.phrase_provisioned_at,
+    recoveryTokenHash: row.recovery_token_hash ?? null,
+    recoveryTokenExpiresAt: row.recovery_token_expires_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     // Encrypted material is only returned to the repository layer's caller
@@ -208,12 +212,18 @@ export async function updateHdWalletStatus(db, hdWalletId, status) {
 
 /**
  * Mark that the one-time recovery phrase was shown to an operator.
+ *
+ * Single-winner semantics: only the caller whose UPDATE matches an
+ * un-provisioned row gets `true`; every concurrent caller gets `false`.
  */
 export async function markPhraseProvisioned(db, hdWalletId) {
   const result = await db.query(
     `
       UPDATE hd_wallets
-      SET phrase_provisioned_at = NOW(), updated_at = NOW()
+      SET phrase_provisioned_at = NOW(),
+          recovery_token_hash = NULL,
+          recovery_token_expires_at = NULL,
+          updated_at = NOW()
       WHERE id = $1 AND phrase_provisioned_at IS NULL
       RETURNING phrase_provisioned_at
     `,
@@ -221,6 +231,77 @@ export async function markPhraseProvisioned(db, hdWalletId) {
   );
 
   return result.rowCount === 1;
+}
+
+/**
+ * Atomically redeem a recovery token.
+ *
+ * The UPDATE is the authoritative one-time check: it only matches when the row
+ * is still un-provisioned *and* the stored token hash equals the presented
+ * token's hash. Concurrent redemptions therefore produce exactly one winner.
+ *
+ * @returns {Promise<{ redeemed: boolean, reason?: string }>}
+ */
+export async function redeemRecoveryToken(db, hdWalletId, tokenHash) {
+  if (typeof tokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(tokenHash)) {
+    throw new TypeError('tokenHash must be a lowercase SHA-256 hex digest');
+  }
+
+  const result = await db.query(
+    `
+      UPDATE hd_wallets
+      SET phrase_provisioned_at = NOW(),
+          recovery_token_hash = NULL,
+          recovery_token_expires_at = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+        AND phrase_provisioned_at IS NULL
+        AND recovery_token_hash = $2
+        AND recovery_token_expires_at IS NOT NULL
+        AND recovery_token_expires_at > NOW()
+      RETURNING id
+    `,
+    [hdWalletId, tokenHash]
+  );
+
+  if (result.rowCount === 1) {
+    return { redeemed: true };
+  }
+
+  return { redeemed: false };
+}
+
+/**
+ * Store the (hashed) recovery token for a freshly created root.
+ *
+ * Only the SHA-256 hash of the plaintext token and its server-side expiry are
+ * persisted; the plaintext token itself is never written to the database.
+ *
+ * @returns {Promise<number>} number of affected rows (0 when the root does not
+ *   exist or its phrase is already provisioned) so the caller can fail closed.
+ */
+export async function storeRecoveryToken(db, hdWalletId, { tokenHash, expiresAt }) {
+  if (typeof tokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(tokenHash)) {
+    throw new TypeError('tokenHash must be a lowercase SHA-256 hex digest');
+  }
+
+  if (!(expiresAt instanceof Date) || Number.isNaN(expiresAt.getTime())) {
+    throw new TypeError('expiresAt must be a valid Date');
+  }
+
+  const result = await db.query(
+    `
+      UPDATE hd_wallets
+      SET recovery_token_hash = $2,
+          recovery_token_expires_at = $3,
+          updated_at = NOW()
+      WHERE id = $1 AND phrase_provisioned_at IS NULL
+      RETURNING id
+    `,
+    [hdWalletId, tokenHash, expiresAt]
+  );
+
+  return result.rowCount;
 }
 
 export async function listHdWallets(db, { ownerId = null, limit = 50 } = {}) {
@@ -254,6 +335,11 @@ export function toHdWalletMetadata(hdWallet) {
     nextAccountIndex: hdWallet.nextAccountIndex,
     status: hdWallet.status,
     phraseProvisioned: hdWallet.phraseProvisionedAt !== null,
+    recoveryTokenActive: Boolean(
+      hdWallet.recoveryTokenHash &&
+      hdWallet.recoveryTokenExpiresAt &&
+      new Date(hdWallet.recoveryTokenExpiresAt).getTime() > Date.now()
+    ),
     createdAt: hdWallet.createdAt,
     updatedAt: hdWallet.updatedAt
   };

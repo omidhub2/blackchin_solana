@@ -22,9 +22,17 @@ const TRANSFER_FIELDS = ['fromPublicKey', 'toPublicKey', 'amountSol', 'approved'
 
 export async function transferRoutes(app) {
   const services = (request) => getServices(app, request);
+  const { distributed = null } = app.config ?? {};
 
-  const estimateLimiter = rateLimitHook({ limit: 60, windowMs: 60_000, keyPrefix: 'tx-estimate' });
-  const submitLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tx-submit' });
+  // Withdrawals are money-moving: fail closed without the shared limiter.
+  const estimateLimiter = rateLimitHook({
+    limit: 60,
+    windowMs: 60_000,
+    keyPrefix: 'tx-estimate',
+    distributed,
+    failClosed: false
+  });
+  const submitLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tx-submit', distributed });
 
   app.post('/api/v1/transfers/estimate', { preHandler: estimateLimiter }, async (request) => {
     const body = requireObject(request.body ?? {}, 'body');

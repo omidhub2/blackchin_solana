@@ -115,26 +115,29 @@ test('key versioning decrypts old records after rotation', () => {
   );
 });
 
-test('recovery tokens are purpose-bound and tamper-evident', () => {
+test('recovery tokens are purpose-bound, wallet-bound and tamper-evident', () => {
   const keyProvider = provider({ ENCRYPTION_KEY: KEY_A });
   const tokens = createPurposeTokenCodec(keyProvider);
-  const token = tokens.seal('recovery-phrase', PLAINTEXT);
+  const { token } = tokens.seal('recovery-phrase', PLAINTEXT, { walletId: '1' });
 
-  assert.equal(tokens.open('recovery-phrase', token), PLAINTEXT);
-  assert.throws(() => tokens.open('root-mnemonic', token), /invalid, expired, or already used/i);
-  assert.throws(() => tokens.open('recovery-phrase', 'not-a-token'), /invalid/i);
+  assert.equal(tokens.open('recovery-phrase', token, { walletId: '1' }).payload, PLAINTEXT);
+  assert.throws(() => tokens.open('root-mnemonic', token, { walletId: '1' }), /invalid, expired, or already used/i);
+  assert.throws(() => tokens.open('recovery-phrase', 'not-a-token', { walletId: '1' }), /invalid/i);
+  assert.throws(() => tokens.open('recovery-phrase', token, { walletId: '2' }), /invalid/i);
+  assert.throws(() => tokens.open('recovery-phrase', token), /invalid/i);
   assert.throws(() => derivePurposeKey(keyProvider, 'unsupported'), /Unsupported encryption purpose/);
+  assert.throws(() => tokens.seal('recovery-phrase', PLAINTEXT), /walletId binding is required/);
 
   const tampered = Buffer.from(token, 'base64url');
   tampered[tampered.length - 1] ^= 0xff;
   assert.throws(
-    () => tokens.open('recovery-phrase', tampered.toString('base64url')),
+    () => tokens.open('recovery-phrase', tampered.toString('base64url'), { walletId: '1' }),
     /invalid/i
   );
 
   const otherKeyProvider = provider({ ENCRYPTION_KEY: KEY_B });
   assert.throws(
-    () => createPurposeTokenCodec(otherKeyProvider).open('recovery-phrase', token),
+    () => createPurposeTokenCodec(otherKeyProvider).open('recovery-phrase', token, { walletId: '1' }),
     /invalid/i
   );
 });
@@ -143,7 +146,7 @@ test('a recovery token cannot be used as stored-record ciphertext', () => {
   const keyProvider = provider({ ENCRYPTION_KEY: KEY_A });
   const tokens = createPurposeTokenCodec(keyProvider);
   const cipher = createCipher(keyProvider);
-  const token = tokens.seal('recovery-phrase', PLAINTEXT);
+  const { token } = tokens.seal('recovery-phrase', PLAINTEXT, { walletId: '1' });
 
   // Different key derivation + AEAD AAD => record decryption rejects the token.
   assert.throws(

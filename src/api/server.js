@@ -4,7 +4,19 @@ import { walletRoutes } from './routes/wallet.routes.js';
 import { transferRoutes } from './routes/transfer.routes.js';
 import { hdWalletRoutes } from './routes/hd-wallet.routes.js';
 
-const OPEN_PATHS = new Set(['/health']);
+const OPEN_PATHS = new Set(['/health', '/health/ready']);
+
+/**
+ * Build a shared rate-limit backend descriptor.
+ *
+ * Returns `null` when no database is available (tests / import-time route
+ * registration), which makes the hooks use their local fallback.
+ */
+function buildDistributedLimiter(db) {
+  if (!db || typeof db.query !== 'function') return null;
+
+  return { db };
+}
 
 /**
  * Build the Fastify application.
@@ -14,11 +26,32 @@ const OPEN_PATHS = new Set(['/health']);
  *   logger?: boolean|object,    // Fastify logger option
  * }} [options]
  */
-export function buildServer({ services, logger = true } = {}) {
+export function buildServer({ services, logger = true, health = null } = {}) {
   // Fail closed before the port is opened when the API key is missing.
   assertApiKeyConfigured();
   const app = Fastify({
-    logger,
+    logger: logger === true || logger === false
+      ? {
+          level: process.env.LOG_LEVEL || 'info',
+          // Never let a recovery token or any credential reach the log even if
+          // a handler later logs the request or its body.
+          redact: {
+            paths: [
+              'req.headers["x-api-key"]',
+              'req.headers["idempotency-key"]',
+              'req.body.token',
+              'req.body.mnemonic',
+              'req.body.confirm',
+              '*.token',
+              '*.mnemonic',
+              '*.privateKey',
+              '*.secretKey',
+              '*.secret'
+            ],
+            censor: '[REDACTED]'
+          }
+        }
+      : logger,
     bodyLimit: 32 * 1024,
     trustProxy: false,
     // Socket-level request timeout (defends against slow clients).
@@ -46,9 +79,24 @@ export function buildServer({ services, logger = true } = {}) {
     service: 'blackchin-wallet-engine'
   }));
 
-  app.register(walletRoutes);
-  app.register(transferRoutes);
-  app.register(hdWalletRoutes);
+  /**
+   * Readiness: database reachability + background worker state. Coarse status
+   * only; no infrastructure identifiers.
+   */
+  app.get('/health/ready', async (_request, reply) => {
+    if (!health) {
+      return reply.code(503).send({ ready: false, checks: { health: 'unconfigured' } });
+    }
+
+    const result = await health.ready();
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  const distributed = buildDistributedLimiter(services?.deps?.db ?? null);
+
+  app.register(walletRoutes, { distributed });
+  app.register(transferRoutes, { distributed });
+  app.register(hdWalletRoutes, { distributed });
 
   // Fastify's own client errors (invalid JSON, oversized payload) keep their
   // 4xx status instead of being masked as an internal server error.
