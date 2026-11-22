@@ -8,10 +8,13 @@
  * means broadcast was not reached.
  */
 import { resolveWallet } from '../../infrastructure/security/wallet-signer.js';
+import { findAccountByPublicKeyForTenant, findHdWalletByIdForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
 import {
   findTransactionBySignature,
   insertBlockchainTransaction,
-  updateTransactionStatus
+  updateTransactionStatus,
+  findTransactionBySignatureForTenant,
+  updateTransactionStatusForTenant
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
 import * as repository from '../../infrastructure/database/withdrawal-reconciliation.repository.js';
 
@@ -89,6 +92,7 @@ export function createWithdrawalReconciliationService({
       await assertCurrentOwnership();
       if (apply) await apply(client);
       await repository.recordWithdrawalReconciliationEvent(client, {
+        tenantId: candidate.tenant_id ?? null,
         idempotencyKey: candidate.idempotency_key,
         network,
         signature: candidate.transaction_signature,
@@ -116,9 +120,9 @@ export function createWithdrawalReconciliationService({
         const result = await client.query(
           `UPDATE api_idempotency_keys
               SET status = 'failed', updated_at = NOW()
-            WHERE id = $1 AND status = 'processing'
-              AND transaction_signature IS NULL`,
-          [candidate.id]
+            WHERE id = $1 AND tenant_id IS NOT DISTINCT FROM $2
+              AND status = 'processing' AND transaction_signature IS NULL`,
+          [candidate.id, candidate.tenant_id ?? null]
         );
         if (result.rowCount !== 1) throw new Error('Idempotency row changed during safe pre-broadcast recovery');
       });
@@ -164,9 +168,9 @@ export function createWithdrawalReconciliationService({
         const result = await client.query(
           `UPDATE api_idempotency_keys
               SET status = 'failed', updated_at = NOW()
-            WHERE id = $1 AND status = 'processing'
-              AND transaction_signature = $2`,
-          [candidate.id, signature]
+            WHERE id = $1 AND tenant_id IS NOT DISTINCT FROM $3
+              AND status = 'processing' AND transaction_signature = $2`,
+          [candidate.id, signature, candidate.tenant_id ?? null]
         );
         if (result.rowCount !== 1) throw new Error('Withdrawal idempotency state changed during finalized failure');
       });
@@ -214,7 +218,20 @@ export function createWithdrawalReconciliationService({
       return 'under_review';
     }
 
-    const wallet = await resolveWallet(db, candidate.wallet_public_key);
+    const wallet = candidate.tenant_id == null
+      ? await resolveWallet(db, candidate.wallet_public_key)
+      : await (async () => {
+          const account = await findAccountByPublicKeyForTenant(db, candidate.tenant_id, candidate.wallet_public_key);
+          if (!account) return null;
+          const parent = await findHdWalletByIdForTenant(db, candidate.tenant_id, account.hdWalletId);
+          if (!parent) return null;
+          return {
+            publicKey: account.publicKey, tenantId: String(candidate.tenant_id),
+            walletType: 'hd_child', status: account.status,
+            effectiveStatus: account.status === 'active' && parent.status === 'active' ? 'active' : 'inactive',
+            network: account.network, hdWalletId: account.hdWalletId, accountIndex: account.accountIndex
+          };
+        })();
     if (!wallet || (wallet.network && wallet.network !== network)) {
       await persistOutcome(candidate, 'under_review', {
         reason: 'Stored sender wallet could not be resolved on the configured network'
@@ -259,9 +276,9 @@ export function createWithdrawalReconciliationService({
       feeLamports: String(feeLamports),
       destination: transfer.to
     }, async (client) => {
-      const existing = await findTransactionBySignature(
-        client, signature, candidate.wallet_public_key, 'withdrawal'
-      );
+      const existing = candidate.tenant_id == null
+        ? await findTransactionBySignature(client, signature, candidate.wallet_public_key, 'withdrawal')
+        : await findTransactionBySignatureForTenant(client, candidate.tenant_id, signature, candidate.wallet_public_key, 'withdrawal');
       if (existing) {
         if (
           existing.amountLamports !== transfer.amountLamports ||
@@ -296,6 +313,7 @@ export function createWithdrawalReconciliationService({
           slot: parsed.slot ?? status.slot ?? null,
           blockTime: parsed.blockTime ? new Date(parsed.blockTime * 1000) : null,
           idempotencyKey: candidate.idempotency_key,
+          tenantId: candidate.tenant_id ?? null,
           metadata: {
             walletType: wallet.walletType,
             accountIndex: wallet.accountIndex,
@@ -307,9 +325,9 @@ export function createWithdrawalReconciliationService({
       const completed = await client.query(
         `UPDATE api_idempotency_keys
             SET status = 'completed', response_json = $2::jsonb, updated_at = NOW()
-          WHERE id = $1 AND status = 'processing'
-            AND transaction_signature = $3`,
-        [candidate.id, JSON.stringify(response), signature]
+          WHERE id = $1 AND tenant_id IS NOT DISTINCT FROM $4
+            AND status = 'processing' AND transaction_signature = $3`,
+        [candidate.id, JSON.stringify(response), signature, candidate.tenant_id ?? null]
       );
       if (completed.rowCount !== 1) {
         throw new Error('Withdrawal idempotency state changed during finalized success');
