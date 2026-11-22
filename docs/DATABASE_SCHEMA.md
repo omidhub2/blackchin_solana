@@ -9,6 +9,8 @@ Migrations are applied with `npm run db:migrate` (see `OPERATIONS.md`).
 | 0003 | `0003_hd_wallets.sql` | HD roots, child accounts, ledger, idempotency columns |
 | 0004 | `0004_hardening.sql` | recovery-token hash/expiry, scanner cursors, webhook outbox, shared rate limiting, ledger UPDATE trigger |
 | 0005 | `0005_ledger_immutability.sql` | re-installs the ledger UPDATE trigger and adds a DELETE guard |
+| 0006 | `0006_deposit_scanner_backfill.sql` | persistent scanner backfill progress |
+| 0007 | `0007_deposit_reconciliation.sql` | durable reconciliation cursor and append-only verification events |
 
 ## `wallets` (legacy, unchanged)
 
@@ -122,3 +124,16 @@ all added with `ADD COLUMN IF NOT EXISTS`.
   from their own encrypted secret key.
 - Applied migrations are checksum-verified; editing one aborts the runner.
 - Back up the database before applying any migration.
+
+## Deposit reconciliation
+
+`deposit_reconciliation_cursors` stores one keyset position per Solana
+network. A completed pass resets the position to zero so the next pass can
+include newly inserted transactions. Failed RPC verification leaves the
+cursor at the last successfully handled transaction.
+
+`deposit_reconciliation_events` is append-only application history linked to
+`blockchain_transactions` with `ON DELETE RESTRICT`. Outcomes are
+`consistent`, `under_review`, `recovered`, and `rpc_error`. Event rows
+record status transitions and minimal verification context; they do not
+represent wallet credits or debits.
