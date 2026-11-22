@@ -309,6 +309,6 @@ test('0012 creates fail-closed tenant withdrawal policy, approval and append-onl
   assert.match(sql, /BEFORE UPDATE OR DELETE ON tenant_withdrawal_policy_events/i);
   assert.match(sql, /BEFORE UPDATE ON tenant_withdrawal_approvals/i);
   assert.match(sql, /network IN \('devnet', 'testnet', 'mainnet-beta'\)/i);
-  assert.match(sql, /absence means disabled/i);
+  assert.match(sql, /Deliberately do not create policy rows for existing tenants/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
