@@ -34,6 +34,15 @@ BEGIN
   END IF;
 END;
 $;
+DO $
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_api_idempotency_tenant_credential') THEN
+    ALTER TABLE api_idempotency_keys
+      ADD CONSTRAINT chk_api_idempotency_tenant_credential
+      CHECK (tenant_credential_id IS NULL OR tenant_id IS NOT NULL);
+  END IF;
+END;
+$;
 -- Keep one globally unique namespace for legacy/unassigned records.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_api_idempotency_legacy_key
   ON api_idempotency_keys(idempotency_key)
