@@ -3,6 +3,7 @@ import { requireApiKey, assertApiKeyConfigured } from './middleware/api-key-auth
 import { walletRoutes } from './routes/wallet.routes.js';
 import { transferRoutes } from './routes/transfer.routes.js';
 import { hdWalletRoutes } from './routes/hd-wallet.routes.js';
+import { tenantWalletRoutes } from './routes/tenant-wallet.routes.js';
 
 const OPEN_PATHS = new Set(['/health', '/health/ready']);
 
@@ -59,6 +60,7 @@ export function buildServer({ services, logger = true, health = null } = {}) {
   });
 
   app.decorateRequest('services', null);
+  app.decorateRequest('tenant', null);
 
   /**
    * Resolve the injected services once per request. Production passes them to
@@ -71,6 +73,7 @@ export function buildServer({ services, logger = true, health = null } = {}) {
 
   app.addHook('preHandler', async (request, reply) => {
     if (OPEN_PATHS.has(request.url)) return;
+    if (request.url.startsWith('/api/v1/tenant/')) return;
     return requireApiKey(request, reply);
   });
 
@@ -97,6 +100,7 @@ export function buildServer({ services, logger = true, health = null } = {}) {
   app.register(walletRoutes, { distributed });
   app.register(transferRoutes, { distributed });
   app.register(hdWalletRoutes, { distributed });
+  app.register(tenantWalletRoutes, { prefix: '/api/v1/tenant' });
 
   // Fastify's own client errors (invalid JSON, oversized payload) keep their
   // 4xx status instead of being masked as an internal server error.
