@@ -110,7 +110,7 @@ export async function tenantWalletRoutes(app) {
     preHandler: requireTenantScope('wallets:read')
   }, async (request) => {
     const id = parsePositiveId(request.params.id, 'id');
-    const parsed = /^\\d{1,10}$/.test(request.params.accountIndex)
+    const parsed = /^\d{1,10}$/.test(request.params.accountIndex)
       ? Number(request.params.accountIndex) : NaN;
     const index = requireSafeInteger(parsed, 'accountIndex', { min: 0, max: 2_147_483_647 });
     return services(request).getAccountAtIndex(tenantId(request), id, index);
