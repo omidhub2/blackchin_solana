@@ -88,27 +88,29 @@ export function assertNetworkMatches(walletNetwork, deploymentNetwork) {
  * miss, a concurrent `UPDATE hd_wallets SET status=...`. Committing immediately
  * after derivation releases the locks before any network I/O.
  */
-export async function lockRowsForSigning(client, { accountId, hdWalletId }) {
+export async function lockRowsForSigning(client, { accountId, hdWalletId, tenantId = null }) {
   const accountResult = await client.query(
     `
-      SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
+      SELECT id, tenant_id, hd_wallet_id, public_key, account_index, derivation_path,
              wallet_type, network, status
       FROM wallet_accounts
       WHERE id = $1
+        AND ($2::bigint IS NULL OR tenant_id = $2)
       FOR SHARE
     `,
-    [accountId]
+    [accountId, tenantId === null ? null : String(tenantId)]
   );
 
   const parentResult = await client.query(
     `
-      SELECT id, network, status, derivation_scheme,
+      SELECT id, tenant_id, network, status, derivation_scheme,
              mnemonic_encrypted, mnemonic_iv, mnemonic_auth_tag, encryption_key_version
       FROM hd_wallets
       WHERE id = $1
+        AND ($2::bigint IS NULL OR tenant_id = $2)
       FOR SHARE
     `,
-    [hdWalletId]
+    [hdWalletId, tenantId === null ? null : String(tenantId)]
   );
 
   return {
