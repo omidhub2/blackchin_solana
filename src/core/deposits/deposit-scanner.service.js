@@ -173,9 +173,11 @@ export function createDepositScanner({
       };
 
       let stopReason = null;
+      let activeCursorId = null;
 
       try {
         scan: for (const wallet of wallets) {
+          activeCursorId = null;
           // Solana signature history is address-specific; never share a cursor
           // between different wallet addresses.
           const walletScope = `address:${wallet.publicKey}`;
@@ -189,6 +191,7 @@ export function createDepositScanner({
             throw new AppError('Scanner cursor could not be created', 500, 'SCANNER_STATE_ERROR');
           }
 
+          activeCursorId = cursor.id;
           await cursors.markCursorRunning(db, cursor.id, new Date());
           let lastHandled = null;
           const pages = Math.max(1, Math.ceil(maxBatch / pageSize));
@@ -303,7 +306,9 @@ export function createDepositScanner({
         return stopReason ? { ...summary, stopped: stopReason } : summary;
       } catch (error) {
         metrics.lastError = error.message;
-        await cursors.markCursorError(db, cursor.id, error.message).catch(() => {});
+        if (activeCursorId !== null) {
+          await cursors.markCursorError(db, activeCursorId, error.message).catch(() => {});
+        }
         throw error;
       }
     }
