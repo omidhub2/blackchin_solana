@@ -121,7 +121,7 @@ test('confirmed but not finalized withdrawal stays processing and is not complet
 
   await service.scan();
 
-  assert.equal(h.calls.some((x) => x.query.includes("outcome") && x.params?.[3] === 'pending'), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'pending'), true);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
 });
 
@@ -166,7 +166,7 @@ test('old processing row without signature is failed only at the safe pre-broadc
   await service.scan();
 
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'failed'") && x.query.includes('transaction_signature IS NULL')), true);
-  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'safe_prebroadcast_failed'), false);
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'safe_prebroadcast_failed'), true);
 });
 
 test('RPC errors do not advance the reconciliation cursor', async () => {
