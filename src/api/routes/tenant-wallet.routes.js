@@ -137,14 +137,15 @@ export async function tenantWalletRoutes(app) {
     preHandler: requireTenantScope('withdrawals:write')
   }, async (request, reply) => {
     const body = requireObject(request.body ?? {}, 'body');
-    rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol', 'approved']);
+    rejectUnknownKeys(body, ['fromPublicKey', 'toPublicKey', 'amountSol', 'approvalReference']);
     const result = await appServices(request).tenantWithdrawals.submit({
       tenantId: tenantId(request),
+      credentialId: request.tenant.credentialId,
       idempotencyKey: requireIdempotencyKey(request.headers['idempotency-key']),
       fromPublicKey: requirePublicKey(body.fromPublicKey, 'fromPublicKey'),
       toPublicKey: requirePublicKey(body.toPublicKey, 'toPublicKey'),
       amountSol: requireSolAmount(body.amountSol),
-      approved: requireBoolean(body.approved, 'approved')
+      approvalReference: requireString(body.approvalReference, 'approvalReference', { min: 8, max: 128, pattern: /^[A-Za-z0-9._:-]+$/ })
     });
     return reply.code(result.replayed ? 200 : 201).send(result);
   });
