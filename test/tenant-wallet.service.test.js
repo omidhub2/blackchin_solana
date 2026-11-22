@@ -98,7 +98,10 @@ test('tenant wallet service creates encrypted HD roots and tenant-bound recovery
 
   const mnemonic = await service.revealMnemonicForSigning(12, wallet.id);
   assert.equal(validateHdMnemonic(mnemonic), true);
-  assert.equal((await service.getHdWallet(13, wallet.id)).id, undefined);
+  await assert.rejects(
+    () => service.getHdWallet(13, wallet.id),
+    (error) => error.code === 'HD_WALLET_NOT_FOUND'
+  );
 });
 
 test('tenant recovery phrase redemption is single-use and tenant constrained', async () => {
