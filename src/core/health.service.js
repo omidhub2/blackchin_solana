@@ -60,7 +60,11 @@ export function createHealthService({
           const reconciliationHealth = reconciliationWorker.health();
           checks.reconciliation = reconciliationHealth.state;
           checks.reconciliationStale = reconciliationHealth.stale;
-          if (reconciliationHealth.state === 'stopped' || reconciliationHealth.state === 'failed') {
+          if (
+            reconciliationHealth.state !== 'running' ||
+            reconciliationHealth.stale === true ||
+            reconciliationHealth.hasLock !== true
+          ) {
             ready = false;
           }
         }
@@ -74,7 +78,11 @@ export function createHealthService({
           const withdrawalHealth = withdrawalReconciliationWorker.health();
           checks.withdrawalReconciliation = withdrawalHealth.state;
           checks.withdrawalReconciliationStale = withdrawalHealth.stale;
-          if (withdrawalHealth.state === 'stopped' || withdrawalHealth.state === 'failed') {
+          if (
+            withdrawalHealth.state !== 'running' ||
+            withdrawalHealth.stale === true ||
+            withdrawalHealth.hasLock !== true
+          ) {
             ready = false;
           }
         }
@@ -99,7 +107,11 @@ export function createHealthService({
           checks.scanner = health.state;
           checks.scannerStale = health.stale;
 
-          if (health.state === 'stopped' || health.state === 'failed') {
+          if (
+            health.state !== 'running' ||
+            health.stale === true ||
+            health.hasLock !== true
+          ) {
             ready = false;
           }
         }
