@@ -48,7 +48,7 @@ These records are not a customer-balance ledger and must never be presented as t
 - Platform operators have separate privileged identities and audited break-glass access.
 - Tenant-specific rate limits, withdrawal policies, supported assets and webhook configuration are centrally managed.
 
-The current `hd_wallets.owner_id` column is only a placeholder. It is not enforced tenant isolation. Multi-tenant production must not be enabled until the full tenant boundary is implemented and tested.
+Migration 0009 introduces the initial tenant registry and hashed API credential schema plus nullable tenant attribution columns. These are not yet wired to runtime authentication, scope checks or tenant-scoped repositories. The current `hd_wallets.owner_id` column remains a legacy placeholder. No tenant isolation claim is valid until the full tenant boundary is implemented and tested.
 
 ## 4. Product modules
 
