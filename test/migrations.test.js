@@ -202,8 +202,8 @@ test('0007 adds append-only deposit reconciliation history without touching bala
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS deposit_reconciliation_cursors/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS deposit_reconciliation_events/i);
-  assert.match(sql, /CREATE TRIGGER trg_deposit_reconciliation_events_immutable\\s+BEFORE UPDATE OR DELETE ON deposit_reconciliation_events/i);
-  assert.match(sql, /RAISE EXCEPTION[\\s\\S]{0,200}check_violation/i);
+  assert.match(sql, /CREATE TRIGGER trg_deposit_reconciliation_events_immutable\s+BEFORE UPDATE OR DELETE ON deposit_reconciliation_events/i);
+  assert.match(sql, /RAISE EXCEPTION[\s\S]{0,200}check_violation/i);
   assert.match(sql, /REFERENCES blockchain_transactions\(id\) ON DELETE RESTRICT/i);
   assert.match(sql, /outcome IN \('consistent', 'under_review', 'recovered', 'rpc_error'\)/i);
   assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)/i);
