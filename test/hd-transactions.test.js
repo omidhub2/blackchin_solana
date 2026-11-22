@@ -126,7 +126,7 @@ function buildWithdrawalHarness() {
 
   pool.onQuery("SET status = 'failed'", (params) => {
     const row = idempotency.get(params[0]);
-    if (row && row.status === 'processing') row.status = 'failed';
+    if (row && row.status === 'processing' && row.transaction_signature === null) row.status = 'failed';
     return { rows: [], rowCount: 1 };
   });
 
