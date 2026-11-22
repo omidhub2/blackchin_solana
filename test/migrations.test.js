@@ -211,4 +211,17 @@ test('0007 adds append-only deposit reconciliation history without touching bala
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
 });
 
-test('0008 adds append-only withdrawal reconciliation evidence without a monetary ledger', async () => {\n  const sql = await readFile(\n    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0008_withdrawal_reconciliation.sql'),\n    'utf8'\n  );\n\n  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_cursors/i);\n  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_events/i);\n  assert.match(sql, /REFERENCES api_idempotency_keys\\(idempotency_key\\) ON DELETE RESTRICT/i);\n  assert.match(sql, /CREATE TRIGGER trg_withdrawal_reconciliation_events_immutable\\s+BEFORE UPDATE OR DELETE ON withdrawal_reconciliation_events/i);\n  assert.doesNotMatch(sql, /UPDATE\\s+(?:wallets|wallet_accounts|hd_wallets)/i);\n  assert.doesNotMatch(sql, /CREATE TABLE[^;]*(?:balance|reservation|ledger)/i);\n  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);\n});\n
+test('0008 adds append-only withdrawal reconciliation evidence without a monetary ledger', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0008_withdrawal_reconciliation.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_cursors/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_events/i);
+  assert.match(sql, /REFERENCES api_idempotency_keys\(idempotency_key\) ON DELETE RESTRICT/i);
+  assert.match(sql, /CREATE TRIGGER trg_withdrawal_reconciliation_events_immutable\s+BEFORE UPDATE OR DELETE ON withdrawal_reconciliation_events/i);
+  assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)/i);
+  assert.doesNotMatch(sql, /CREATE TABLE[^;]*(?:balance|reservation|ledger)/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
