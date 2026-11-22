@@ -179,7 +179,15 @@ export function createWithdrawalReconciliationService({
       return 'pending';
     }
 
-    if (!parsed || parsed.meta?.err) {
+    if (
+      !parsed ||
+      parsed.meta?.err ||
+      !Array.isArray(parsed.transaction?.signatures) ||
+      !parsed.transaction.signatures.includes(signature) ||
+      (status.slot !== null && status.slot !== undefined &&
+        parsed.slot !== null && parsed.slot !== undefined &&
+        Number(status.slot) !== Number(parsed.slot))
+    ) {
       await persistOutcome(candidate, 'under_review', {
         reason: 'Finalized signature status has no matching successful parsed transaction evidence',
         parsedAvailable: Boolean(parsed),
