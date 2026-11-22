@@ -118,4 +118,20 @@ export async function tenantWalletRoutes(app) {
     const index = requireSafeInteger(parsed, 'accountIndex', { min: 0, max: 2_147_483_647 });
     return services(request).getAccountAtIndex(tenantId(request), id, index);
   });
+  app.get('/deposits', {
+    preHandler: requireTenantScope('deposits:read')
+  }, async (request) => {
+    const limit = request.query.limit === undefined ? 20 :
+      requireSafeInteger(Number(request.query.limit), 'limit', { min: 1, max: 100 });
+    const offset = request.query.offset === undefined ? 0 :
+      requireSafeInteger(Number(request.query.offset), 'offset', { min: 0, max: 1_000_000 });
+    return services(request).deposits.listForTenant(tenantId(request), { limit, offset });
+  });
+
+  app.get('/deposits/:signature', {
+    preHandler: requireTenantScope('deposits:read')
+  }, async (request) => {
+    const signature = requireString(request.params.signature, 'signature', { min: 80, max: 90, pattern: /^[1-9A-HJ-NP-Za-km-z]{80,90}$/ });
+    return services(request).deposits.getForTenant(tenantId(request), signature);
+  });
 }
