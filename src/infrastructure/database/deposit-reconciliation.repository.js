@@ -28,7 +28,7 @@ export async function listReconciliationCandidates(db, network, afterId, limit) 
        FROM blockchain_transactions
       WHERE network = $1
         AND direction = 'deposit'
-        AND status IN ('confirmed', 'credited', 'under_review')
+        AND status IN ('confirming', 'confirmed', 'credited', 'under_review')
         AND id > $2
       ORDER BY id ASC
       LIMIT $3`,
