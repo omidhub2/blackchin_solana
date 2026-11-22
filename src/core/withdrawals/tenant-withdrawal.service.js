@@ -3,7 +3,7 @@
  * Tenant ownership is enforced on wallet lookup, signing, idempotency and ledger writes.
  */
 import crypto from 'node:crypto';
-import { badRequest, conflict, notFound } from '../errors.js';
+import { badRequest, conflict, notFound, serviceUnavailable } from '../errors.js';
 import {
   findAccountByPublicKeyForTenant,
   findHdWalletByIdForTenant
@@ -42,7 +42,7 @@ function hashRequest({ fromPublicKey, toPublicKey, amountSol, network }) {
     .digest('hex');
 }
 
-export function createTenantWithdrawalService({ db, rpc, network, commitment, cipher }) {
+export function createTenantWithdrawalService({ db, rpc, network, commitment, cipher, tenantWithdrawalPolicy = null }) {
   if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
     throw new TypeError('A PostgreSQL database pool is required');
   }
@@ -132,14 +132,26 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
 
     async submit(input) {
       const tenantId = assertTenantId(input?.tenantId);
-      const { idempotencyKey, fromPublicKey, toPublicKey, amountSol, approved } = input ?? {};
+      const { idempotencyKey, fromPublicKey, toPublicKey, amountSol, approvalReference, credentialId } = input ?? {};
       if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
         throw badRequest('A valid Idempotency-Key header is required', 'INVALID_IDEMPOTENCY_KEY');
       }
-      if (approved !== true) throw badRequest('Explicit withdrawal approval is required', 'APPROVAL_REQUIRED');
+      if (typeof approvalReference !== 'string' || !/^[A-Za-z0-9._:-]{8,128}$/.test(approvalReference)) {
+        throw badRequest('A valid partner approval reference is required', 'APPROVAL_REFERENCE_REQUIRED');
+      }
+      if (!tenantWithdrawalPolicy || typeof tenantWithdrawalPolicy.authorize !== 'function') {
+        throw serviceUnavailable('Tenant withdrawal policy is not configured; submissions are disabled', 'WITHDRAWAL_POLICY_UNAVAILABLE');
+      }
 
       const wallet = await requireWallet(tenantId, fromPublicKey);
       const amountLamports = parseAmountLamports(amountSol);
+      const authorization = await tenantWithdrawalPolicy.authorize({
+        tenantId, credentialId, approvalReference, wallet,
+        fromPublicKey, toPublicKey, amountLamports, network, idempotencyKey
+      });
+      if (authorization !== true && authorization?.allowed !== true) {
+        throw conflict('Tenant withdrawal was denied by the configured policy', 'WITHDRAWAL_NOT_AUTHORIZED');
+      }
       const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol, network });
       const reservation = await reserve({
         tenantId, idempotencyKey, requestHash,
