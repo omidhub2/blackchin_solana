@@ -44,8 +44,9 @@ BLACKCHIN does not decide whether a partner's end customer has sufficient intern
 - AES-256-GCM encrypted secret storage, one-time recovery provisioning and idempotent withdrawal handling.
 - Deposit and withdrawal reconciliation workers with PostgreSQL advisory locks and append-only evidence events.
 - Ordered, checksum-verified PostgreSQL migrations.
+- Initial tenant registry/hashed API credential schema foundation (not yet wired into runtime authentication or authorization).
 
-**Not currently implemented:** production multi-tenant authorization/isolation, EVM and TRON adapters, SPL/ERC-20/TRC-20 token operations, integrated KMS/HSM, full webhook delivery, partner-facing company administration, and a per-company operational asset attribution ledger. Do not expose the current single-credential API as a public multi-company service until the tenant-security phase is complete.
+**Not currently implemented:** production multi-tenant authentication/authorization/isolation (the additive tenant schema foundation exists but is not wired into runtime), EVM and TRON adapters, SPL/ERC-20/TRC-20 token operations, integrated KMS/HSM, full webhook delivery, partner-facing company administration, and a per-company operational asset attribution ledger. Do not expose the current single-credential API as a public multi-company service until the tenant-security phase is complete.
 
 ## Repository layout
 
