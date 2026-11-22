@@ -127,3 +127,67 @@ test('scanner keeps independent cursors per address and refreshes known deposits
   assert.equal(summary.duplicates, 1);
   assert.equal(summary.cursors.length, 2);
 });
+
+test('scanner paginates with before and stores the newest fully handled signature', async () => {
+  const address = '11111111111111111111111111111111';
+  const pageOptions = [];
+  const cursorUpdates = [];
+  const cursors = {
+    async ensureCursor(_db, { scope }) {
+      return { id: scope, lastSignature: 'old-anchor', lastSlot: 1, lastBlockTime: null };
+    },
+    async markCursorRunning() {},
+    async advanceCursor(_db, _id, position) {
+      cursorUpdates.push(position);
+      return { lastSignature: position.lastSignature, lastSlot: position.lastSlot };
+    },
+    async markCursorError(_db, _id, message) {
+      throw new Error(message);
+    }
+  };
+  const rpc = {
+    network: 'devnet',
+    commitment: 'confirmed',
+    async getRecentSignatures(_address, options) {
+      pageOptions.push({ ...options });
+      if (!options.before) return [{ signature: 'newest-signature', slot: 3 }];
+      if (options.before === 'newest-signature') return [{ signature: 'older-signature', slot: 2 }];
+      return [];
+    },
+    async getParsedTransaction(signature) {
+      return { signature, slot: signature === 'newest-signature' ? 3 : 2, meta: { err: null } };
+    },
+    async getSignatureStatuses() {
+      return { value: [{ confirmationStatus: 'finalized', err: null }] };
+    },
+    extractIncomingTransfers() {
+      return [];
+    }
+  };
+  const deposits = {
+    async isRecorded() { return false; },
+    async refreshDeposit() {},
+    async recordVerifiedDeposit() { throw new Error('No incoming transfer should be recorded'); }
+  };
+
+  const scanner = createDepositScanner({
+    db: {},
+    rpc,
+    deposits,
+    cursors,
+    resolveWallets: async () => [{ publicKey: address, hdWalletId: '1' }],
+    pageSize: 1,
+    maxBatch: 2
+  });
+
+  const summary = await scanner.scan({ network: 'devnet', scope: 'all' });
+
+  assert.deepEqual(pageOptions.map((item) => item.before ?? null), [
+    null,
+    'newest-signature',
+    'older-signature'
+  ]);
+  assert.equal(cursorUpdates.length, 1);
+  assert.equal(cursorUpdates[0].lastSignature, 'newest-signature');
+  assert.equal(summary.stopped, undefined);
+});
