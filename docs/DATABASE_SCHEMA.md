@@ -108,7 +108,10 @@ Constraint: `uq_blockchain_transactions_identity (signature, wallet_public_key, 
 ## `api_idempotency_keys` (extended by 0003)
 
 Existing columns plus `wallet_public_key`, `operation`, `transaction_signature`,
-all added with `ADD COLUMN IF NOT EXISTS`.
+and `network`, all added with `ADD COLUMN IF NOT EXISTS`. Withdrawal network is
+captured when the idempotency row is created; legacy rows remain `NULL` and are
+excluded from automatic withdrawal reconciliation because their chain cannot
+be established safely.
 
 ## Migration safety
 
