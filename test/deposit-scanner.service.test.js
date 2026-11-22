@@ -314,3 +314,71 @@ test('scanner resumes a maxBatch backfill across runs and publishes high-water o
   assert.deepEqual(updates.map((item) => item.type), ['save', 'save', 'complete']);
   assert.ok(calls.some((item) => item.until === 'old-anchor'));
 });
+
+
+test('scanner applies confirmation threshold to processed signatures and never records RPC-failed signatures', async () => {
+  const address = '11111111111111111111111111111111';
+  const inserted = [];
+  let currentStatus = { confirmationStatus: 'processed', confirmations: 2, err: null };
+  const cursors = {
+    async ensureCursor(_db, { scope }) { return { id: scope, lastSignature: 'anchor', lastSlot: 1 }; },
+    async markCursorRunning() {},
+    async advanceCursor(_db, _id, position) {
+      return { lastSignature: position.lastSignature, lastSlot: position.lastSlot };
+    },
+    async markCursorError(_db, _id, message) { throw new Error(message); }
+  };
+  const rpc = {
+    network: 'devnet',
+    commitment: 'confirmed',
+    async getRecentSignatures(_address, options) {
+      return options.before ? [] : [{ signature: 'incoming-signature', slot: 2 }];
+    },
+    async getParsedTransaction(signature) {
+      return { signature, slot: 2, meta: { err: null } };
+    },
+    async getSignatureStatuses() { return { value: [currentStatus] }; },
+    extractIncomingTransfers() {
+      return [{
+        from: 'So11111111111111111111111111111111111111112',
+        to: address,
+        lamports: '5000'
+      }];
+    }
+  };
+  const deposits = {
+    async isRecorded() { return false; },
+    async refreshDeposit() {},
+    async recordVerifiedDeposit(input) {
+      inserted.push(input);
+      return { created: true };
+    }
+  };
+  const createScanner = () => createDepositScanner({
+    db: {},
+    rpc,
+    deposits,
+    cursors,
+    resolveWallets: async () => [{ publicKey: address, hdWalletId: '9' }],
+    confirmationsRequired: 3,
+    pageSize: 10,
+    maxBatch: 10
+  });
+
+  const pending = await createScanner().scan({ network: 'devnet', scope: 'all' });
+  assert.equal(pending.recorded, 1);
+  assert.equal(inserted[0].status, 'confirming');
+  assert.equal(inserted[0].confirmations, 2);
+
+  currentStatus = { confirmationStatus: 'processed', confirmations: 3, err: null };
+  const thresholdMet = await createScanner().scan({ network: 'devnet', scope: 'all' });
+  assert.equal(thresholdMet.recorded, 1);
+  assert.equal(inserted[1].status, 'confirmed');
+  assert.equal(inserted[1].confirmations, 3);
+
+  currentStatus = { confirmationStatus: 'processed', confirmations: 5, err: { InstructionError: [0, 'Custom'] } };
+  const failed = await createScanner().scan({ network: 'devnet', scope: 'all' });
+  assert.equal(failed.recorded, 0);
+  assert.equal(failed.failed, 1);
+  assert.equal(inserted.length, 2);
+});
