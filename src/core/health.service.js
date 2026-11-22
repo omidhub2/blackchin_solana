@@ -10,6 +10,8 @@ export function createHealthService({
   pool,
   scanner = null,
   workerEnabled = false,
+  reconciliationWorker = null,
+  reconciliationEnabled = false,
   network,
   scope,
   queueDepth = null,
@@ -31,7 +33,11 @@ export function createHealthService({
      * Returns 200 when ready, 503 otherwise.
      */
     async ready() {
-      const checks = { database: 'unknown', scanner: workerEnabled ? 'unknown' : 'disabled' };
+      const checks = {
+        database: 'unknown',
+        scanner: workerEnabled ? 'unknown' : 'disabled',
+        reconciliation: reconciliationEnabled ? 'unknown' : 'disabled'
+      };
       let ready = true;
 
       try {
@@ -41,6 +47,20 @@ export function createHealthService({
       } catch {
         checks.database = 'error';
         ready = false;
+      }
+
+      if (reconciliationEnabled) {
+        if (!reconciliationWorker) {
+          checks.reconciliation = 'not_started';
+          ready = false;
+        } else {
+          const reconciliationHealth = reconciliationWorker.health();
+          checks.reconciliation = reconciliationHealth.state;
+          checks.reconciliationStale = reconciliationHealth.stale;
+          if (reconciliationHealth.state === 'stopped' || reconciliationHealth.state === 'failed') {
+            ready = false;
+          }
+        }
       }
 
       let outboxPending = null;
