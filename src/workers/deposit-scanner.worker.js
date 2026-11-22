@@ -66,6 +66,10 @@ export function createDepositScannerWorker({
     consecutiveFailures: 0
   };
 
+  function nextDelayMs() {
+    return consecutiveFailures > 0 ? backoffMs : intervalMs;
+  }
+
   function schedule(delayMs) {
     if (state === 'stopping' || state === 'stopped') return;
 
@@ -78,7 +82,7 @@ export function createDepositScannerWorker({
         .catch(() => { })
         .finally(() => {
           inFlight = null;
-          schedule(state === 'running' ? intervalMs : backoffMs);
+          schedule(nextDelayMs());
         });
     }, delayMs);
 
@@ -188,7 +192,7 @@ export function createDepositScannerWorker({
         .catch(() => { })
         .finally(() => {
           inFlight = null;
-          schedule(intervalMs);
+          schedule(nextDelayMs());
         });
 
       return { started: true };
