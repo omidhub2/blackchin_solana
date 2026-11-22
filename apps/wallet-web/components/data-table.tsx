@@ -64,11 +64,11 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="panel overflow-hidden">
+    <div className="panel overflow-hidden border-white/[0.09]">
       {(searchable || toolbar) ? (
-        <div className="flex flex-col gap-3 border-b border-white/[0.06] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b border-white/[0.08] bg-white/[0.025] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           {searchable ? (
-            <div className="relative w-full sm:max-w-xs">
+            <div className="relative w-full sm:max-w-sm">
               <Search size={14} className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 value={query}
@@ -77,7 +77,7 @@ export function DataTable<T>({
                   setPage(0);
                 }}
                 placeholder={t('common.search')}
-                className="input !py-2 ps-9 text-xs"
+                className="input !border-white/[0.09] !bg-ink-950/80 !py-2.5 ps-9 text-xs"
               />
             </div>
           ) : <span />}
@@ -86,9 +86,9 @@ export function DataTable<T>({
       ) : null}
 
       {loading ? (
-        <div className="space-y-2 p-4">
+        <div className="space-y-2.5 p-5">
           {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className="skeleton h-10 w-full" />
+            <div key={index} className="skeleton h-12 w-full" />
           ))}
         </div>
       ) : visible.length === 0 ? (
@@ -116,14 +116,14 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] px-4 py-3 text-xs text-slate-500">
+      <div className="flex items-center justify-between gap-3 border-t border-white/[0.08] bg-white/[0.02] px-5 py-4 text-xs text-slate-400">
         <span>
           {filtered.length === 0 ? 0 : safePage * pageSize + 1}–{Math.min(filtered.length, (safePage + 1) * pageSize)} / {filtered.length}
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="btn-secondary !px-2.5 !py-1.5"
+            className="btn-secondary !rounded-lg !px-2.5 !py-1.5"
             disabled={safePage === 0}
             onClick={() => setPage((current) => Math.max(0, current - 1))}
             aria-label={t('common.previous')}
