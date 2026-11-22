@@ -4,7 +4,8 @@ import { Keypair } from '@solana/web3.js';
 import { createDepositService } from '../src/core/deposits/deposit.service.js';
 import {
   findTransactionBySignatureForTenant,
-  listDepositsForTenant
+  listDepositsForTenant,
+  getDepositMonitoringForTenant
 } from '../src/infrastructure/database/blockchain-transaction.repository.js';
 
 const signature = '5'.repeat(88);
@@ -96,7 +97,8 @@ test('tenant transaction lookup and history SQL always constrain tenant_id', asy
   };
   assert.equal(await findTransactionBySignatureForTenant(db, '41', signature, destination), null);
   assert.deepEqual(await listDepositsForTenant(db, '41', { limit: 10, offset: 20 }), []);
+  assert.deepEqual(await getDepositMonitoringForTenant(db, '41'), []);
   assert.match(calls[0].sql, /tenant_id = \$1/);
   assert.match(calls[1].sql, /tenant_id = \$1 AND direction = 'deposit'/);
-  assert.deepEqual(calls.map((call) => call.params[0]), ['41', '41']);
+  assert.deepEqual(calls.map((call) => call.params[0]), ['41', '41', '41']);
 });
