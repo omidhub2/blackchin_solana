@@ -57,6 +57,8 @@ function basePool(memory) {
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   });
 
+  pool.onQuery('SELECT tenant_id FROM wallet_accounts', () => ({ rows: [], rowCount: 0 }));
+
   pool.onQuery('FROM wallet_accounts WHERE public_key', (params) => {
     const row = memory.accountByPublicKey(params[0]);
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
