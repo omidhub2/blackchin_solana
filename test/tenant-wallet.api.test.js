@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { buildServer } from '../src/api/server.js';
 
-function makeCredentialDb({ tenantId = '41', scopes = ['wallets:read', 'wallets:write', 'addresses:write'] } = {}) {
+function makeCredentialDb({ tenantId = '41', scopes = ['wallets:read', 'wallets:write', 'addresses:write', 'deposits:read'] } = {}) {
   const apiKey = 'bc_live_test.secret-value';
   const secretHash = crypto.createHash('sha256').update(apiKey, 'utf8').digest();
   const db = {
@@ -46,10 +46,14 @@ function makeServices({ tenantId = '41', scopes } = {}) {
     async createAccounts(...args) { calls.push(['createAccounts', ...args]); return {}; },
     async getAccountAtIndex(...args) { calls.push(['getAccountAtIndex', ...args]); return {}; }
   };
+  const deposits = {
+    async listForTenant(...args) { calls.push(['listForTenant', ...args]); return []; },
+    async getForTenant(...args) { calls.push(['getForTenant', ...args]); return { signature: args[1], tenantId: args[0] }; }
+  };
   return {
     calls,
     apiKey: credential.apiKey,
-    services: { deps: { db: credential.db }, tenantWallets }
+    services: { deps: { db: credential.db }, tenantWallets, deposits }
   };
 }
 
@@ -99,6 +103,37 @@ test('tenant wallet lookup always receives the authenticated tenant id', async (
     });
     assert.equal(response.statusCode, 200);
     assert.deepEqual(fake.calls[0], ['getHdWallet', '77', 901]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('tenant deposit history is scoped to the authenticated tenant', async () => {
+  const fake = makeServices({ tenantId: '88', scopes: ['deposits:read'] });
+  const app = buildServer({ logger: false, services: fake.services });
+  try {
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/tenant/deposits?limit=10&offset=5',
+      headers: { 'x-api-key': fake.apiKey }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(fake.calls[0], ['listForTenant', '88', { limit: 10, offset: 5 }]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('tenant deposit detail lookup cannot omit authenticated tenant scope', async () => {
+  const fake = makeServices({ tenantId: '99', scopes: ['deposits:read'] });
+  const app = buildServer({ logger: false, services: fake.services });
+  try {
+    const signature = '5'.repeat(88);
+    const response = await app.inject({
+      method: 'GET', url: `/api/v1/tenant/deposits/${signature}`,
+      headers: { 'x-api-key': fake.apiKey }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(fake.calls[0], ['getForTenant', '99', signature]);
   } finally {
     await app.close();
   }
