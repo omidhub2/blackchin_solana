@@ -64,7 +64,7 @@ test('tenant withdrawal estimate does not fall back to a wallet owned by another
   );
   assert.equal(rpcCalls, 0);
   assert.equal(db.calls.length, 1);
-  assert.match(db.calls[0].query, /tenant_id = \\$1/);
+  assert.match(db.calls[0].query, /tenant_id = \$1/);
 });
 
 test('tenant withdrawal refuses inactive parent wallets before any RPC request', async () => {
