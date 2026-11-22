@@ -58,12 +58,12 @@ function buildPool(memory) {
   });
 
   // Signing-path locks (SELECT ... FOR SHARE).
-  pool.onQuery('FROM wallet_accounts\n      WHERE id = $1\n      FOR SHARE', (params) => {
+  pool.onQuery('FROM wallet_accounts\n      WHERE id = $1', (params) => {
     const row = memory.accounts.find((item) => String(item.id) === String(params[0]));
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   });
 
-  pool.onQuery('FROM hd_wallets\n      WHERE id = $1\n      FOR SHARE', (params) => {
+  pool.onQuery('FROM hd_wallets\n      WHERE id = $1', (params) => {
     const row = memory.hdWallets.get(String(params[0]));
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   });
