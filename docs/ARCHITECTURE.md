@@ -1,7 +1,7 @@
 # BLACKCHIN CORE — System Architecture
 
 **Architecture target:** cloud-hosted, multi-tenant wallet/blockchain infrastructure.  
-**Current implementation:** single-credential Solana-first service; not yet safe to expose as a public multi-tenant platform.
+**Current implementation:** Solana-first modular monolith with tenant-authenticated partner routes, a separate operator dashboard, durable webhooks and real-time operational events. Production KMS/HSM signing and the tenant withdrawal policy provider remain external blockers.
 
 ## 1. Logical architecture
 
@@ -70,7 +70,7 @@ Required controls:
 - Test that tenant A cannot enumerate, read, mutate, sign with or replay tenant B resources.
 - Separate platform-admin access from partner access and audit every privileged action.
 
-Migration 0009 now provides a tenant registry, hashed credential records and nullable tenant attribution columns. This is only a schema foundation: current API authentication is still one shared `API_ACCESS_KEY`, tenant credentials are not authenticated by the runtime, and tenant authorization is not enforced. The current `hd_wallets.owner_id` is a legacy placeholder and must not be treated as tenant identity. Do not deploy this code as a multi-tenant public service before this phase is implemented.
+Migration 0009 provides the tenant registry, hashed credential records and tenant attribution columns. Tenant routes under `/api/v1/tenant/` authenticate a tenant credential, enforce scopes and pass the authenticated tenant ID through every repository and signer call. The legacy `/api/v1/` routes still use the single trusted-backend `API_ACCESS_KEY` and are not a partner multi-tenant surface. `hd_wallets.owner_id` remains a legacy placeholder and is not tenant identity. Dashboard operators authenticate through a separate session domain.
 
 ## 4. Wallet and address isolation
 
@@ -113,16 +113,19 @@ Current adapter: Solana native SOL. EVM, TRON and token adapters are roadmap ite
 
 Chain observation and webhook delivery are separate states. A webhook retry must never create a second deposit or imply another on-chain credit.
 
+Each verified observation also appends a durable `operational_events` row used by the real-time dashboard. This telemetry is independent of partner accounting.
+
 ## 7. Withdrawal data flow
 
 1. Partner authenticates its customer and approves the business withdrawal in its own application.
 2. Partner submits a signed/authenticated, tenant-scoped instruction and idempotency key.
 3. Core validates tenant, wallet ownership, network/asset, destination policy, limits, risk controls and infrastructure liquidity.
-4. Core creates a durable execution intent and reserves the required operational funds/fee capacity.
-5. Signer verifies tenant/wallet authorization again and signs.
-6. Persist signed transaction identity before broadcasting; broadcast through adapter.
-7. Reconciliation resolves pending/unknown/finalized success/failure.
-8. Commit resulting state and outbox event; partner updates its own customer accounting.
+4. A designated hot wallet must be active, signing-enabled and within its single-transfer ceiling.
+5. Core creates a durable execution intent and reserves the required operational funds/fee capacity.
+6. Signer verifies tenant/wallet authorization again and signs.
+7. Persist signed transaction identity before broadcasting; broadcast through adapter.
+8. Reconciliation resolves pending/unknown/finalized success/failure.
+9. Commit resulting state and outbox/operational events; partner updates its own customer accounting.
 
 External chain broadcast cannot be atomic with a PostgreSQL transaction. Use a durable state machine and never retry a possibly broadcast transaction as a new transaction without authoritative reconciliation.
 
@@ -139,7 +142,7 @@ The existing `blockchain_transactions` table is transaction evidence/operational
 
 ## 9. Cloud deployment target
 
-Deploy as independently scalable API, scanner, reconciliation and webhook worker processes. Use managed PostgreSQL with TLS verification, private networking and PITR; managed secrets/KMS; RPC providers with quotas/failover; centralized logs/metrics/traces; and an ingress/load balancer with TLS, WAF/rate limits and request-size controls.
+Deploy as independently scalable API, scanner, reconciliation, webhook and dashboard processes. Use managed PostgreSQL with TLS verification, private networking and PITR; managed secrets/KMS; RPC providers with quotas/failover; centralized logs/metrics/traces; and an ingress/load balancer with TLS, WAF/rate limits and request-size controls. The Next.js dashboard is a separate workspace (`apps/wallet-web/`) and proxies dashboard API calls to the Fastify origin.
 
 Worker leadership and distributed coordination must use database-backed locks or a proven distributed coordination service. Lock loss must stop new side effects. Multi-replica correctness must be tested under connection loss, process termination and network partitions.
 
@@ -153,3 +156,15 @@ Do not bind signing keys to a general API container when a separate signer bound
 - Append-only evidence and compensating corrections.
 - Tenant isolation is a security invariant, not a UI filter.
 - Partner customer balances and Double-Entry accounting are explicitly out of scope.
+
+## 11. Real-time dashboard
+
+The operator dashboard uses Server-Sent Events backed by the append-only
+`operational_events` table. A connecting client receives a snapshot and a
+numeric cursor, then receives every subsequent event; reconnecting clients
+replay from their last cursor. See `REALTIME_DASHBOARD.md`.
+
+Dashboard authentication is a separate domain from partner API credentials:
+scrypt password hashes, hashed opaque session tokens, HTTP-only SameSite=Strict
+cookies and a session-bound CSRF token. Dashboard roles are `admin`, `operator`
+and `viewer`.

@@ -15,6 +15,10 @@ This document describes the **current database**, not the complete target schema
 | 0007 | `0007_deposit_reconciliation.sql` | deposit reconciliation cursor and append-only evidence |
 | 0008 | `0008_withdrawal_reconciliation.sql` | withdrawal reconciliation cursor and append-only evidence |
 | 0009 | `0009_tenant_foundation.sql` | tenant registry, hashed API credential records and nullable tenant attribution columns |
+| 0010 | `0010_tenant_withdrawal_reconciliation.sql` | tenant attribution for withdrawal reconciliation evidence |
+| 0011 | `0011_tenant_idempotency_namespace.sql` | tenant-scoped idempotency keys and credential/approval binding |
+| 0012 | `0012_tenant_withdrawal_policy_foundation.sql` | fail-closed withdrawal policy, destinations, approvals and audit |
+| 0013 | `0013_dashboard_realtime_platform.sql` | dashboard operators/sessions, operational events, tenant webhook endpoints and hot wallets |
 
 ## 2. Current tables and their meaning
 
@@ -25,6 +29,11 @@ The tenant registry stores company identity/status. API credential rows store a 
 Migration 0009 adds nullable `tenant_id` attribution columns to existing wallet, transaction, idempotency and outbox records. Existing rows remain unassigned because their company ownership cannot safely be inferred. Tenant ownership becomes immutable after it is assigned. Composite foreign keys ensure an assigned HD child/transaction tenant matches its HD root.
 
 `NULL tenant_id` is a legacy/transition state, not an acceptable ownership state for new multi-tenant records. New tenant-aware write paths must require a verified tenant context.
+
+Migration 0013 adds the operator dashboard identity domain (`dashboard_users`,
+`dashboard_sessions`), the append-only `operational_events` log, tenant webhook
+endpoints with encrypted signing secrets, and the `hot_wallets` registry. None
+of these tables stores partner customer balances or accounting data.
 
 ### `wallets`
 
@@ -114,10 +123,12 @@ This domain exists to reconcile infrastructure custody and tenant-attributed act
 
 ## 6. Current limitations
 
-- Tenant registry and credential-hash schema foundation exists, but no runtime tenant authentication or scope enforcement.
-- No complete tenant-scoped API authorization.
-- `hd_wallets.owner_id` is not enforced.
-- No complete multi-chain asset/transaction schema.
-- No customer monetary reservation ledger (intentionally outside the partner accounting boundary).
+- Tenant authentication and scopes are enforced on `/api/v1/tenant/` routes;
+  legacy `/api/v1/` routes remain a single trusted-backend surface.
+- `hd_wallets.owner_id` is a legacy placeholder, not tenant identity.
+- No multi-chain asset/transaction schema yet (Solana native SOL only).
+- No customer monetary reservation ledger (intentionally outside the partner
+  accounting boundary).
 - No complete operational asset attribution ledger yet.
-- No complete transactional webhook delivery implementation.
+- Withdrawal policy rows are not auto-created; absence means disabled.
+- Production KMS/HSM signing is not integrated.

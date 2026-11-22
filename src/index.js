@@ -24,6 +24,10 @@ const reconciliationEnabled = process.env.DEPOSIT_RECONCILIATION_ENABLED === 'tr
 const reconciliationIntervalMs = Number(process.env.DEPOSIT_RECONCILIATION_INTERVAL_MS || 60_000);
 const withdrawalReconciliationEnabled = process.env.WITHDRAWAL_RECONCILIATION_ENABLED === 'true';
 const withdrawalReconciliationIntervalMs = Number(process.env.WITHDRAWAL_RECONCILIATION_INTERVAL_MS || 60_000);
+const webhookDeliveryEnabled = process.env.WEBHOOK_DELIVERY_ENABLED === 'true';
+const webhookDeliveryIntervalMs = Number(process.env.WEBHOOK_DELIVERY_INTERVAL_MS || 5_000);
+const legacyWebhookEndpoint = process.env.WEBHOOK_ENDPOINT || null;
+const legacyWebhookSecret = process.env.WEBHOOK_SECRET || null;
 
 if (!Number.isSafeInteger(scannerIntervalMs) || scannerIntervalMs < 1_000) {
   throw new Error('DEPOSIT_SCANNER_INTERVAL_MS must be an integer >= 1000');
@@ -34,11 +38,21 @@ if (!Number.isSafeInteger(reconciliationIntervalMs) || reconciliationIntervalMs 
 if (!Number.isSafeInteger(withdrawalReconciliationIntervalMs) || withdrawalReconciliationIntervalMs < 5_000) {
   throw new Error('WITHDRAWAL_RECONCILIATION_INTERVAL_MS must be an integer >= 5000');
 }
+if (!Number.isSafeInteger(webhookDeliveryIntervalMs) || webhookDeliveryIntervalMs < 1_000) {
+  throw new Error('WEBHOOK_DELIVERY_INTERVAL_MS must be an integer >= 1000');
+}
+if (webhookDeliveryEnabled && !legacyWebhookEndpoint && !legacyWebhookSecret) {
+  // Tenant endpoints are resolved per event. A legacy platform endpoint is
+  // optional; without either, events are discarded with an explicit reason.
+  console.warn('Webhook delivery is enabled without a legacy WEBHOOK_ENDPOINT; only tenant-configured endpoints will receive events.');
+}
 
 let server;
 let worker;
 let reconciliationWorker;
 let withdrawalReconciliationWorker;
+let webhookWorker;
+const webhookWorkerRef = { current: null };
 let shuttingDown = false;
 
 async function shutdown(signal) {
@@ -50,6 +64,7 @@ async function shutdown(signal) {
   try {
     // Stop background work first so no scan writes after the pool starts
     // draining, then close HTTP, then the pool.
+    if (webhookWorker) await webhookWorker.stop();
     if (withdrawalReconciliationWorker) await withdrawalReconciliationWorker.stop();
     if (reconciliationWorker) await reconciliationWorker.stop();
     if (worker) await worker.stop();
@@ -79,6 +94,11 @@ try {
   await pool.query('SELECT enabled, emergency_frozen, policy_version FROM tenant_withdrawal_policies LIMIT 0');
   await pool.query('SELECT approval_reference, issuer_event_id, status FROM tenant_withdrawal_approvals LIMIT 0');
   await pool.query('SELECT decision, reason_code FROM tenant_withdrawal_policy_events LIMIT 0');
+  await pool.query('SELECT password_hash, role FROM dashboard_users LIMIT 0');
+  await pool.query('SELECT token_hash, csrf_token_hash FROM dashboard_sessions LIMIT 0');
+  await pool.query('SELECT event_type, payload FROM operational_events LIMIT 0');
+  await pool.query('SELECT endpoint_url, secret_encrypted FROM tenant_webhook_endpoints LIMIT 0');
+  await pool.query('SELECT public_key, signing_enabled FROM hot_wallets LIMIT 0');
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
@@ -90,7 +110,84 @@ try {
 
   // Creating services validates ENCRYPTION_KEY and fails closed before the
   // port is opened.
-  const services = createServices({ pool });
+  const services = createServices({ pool, webhookWorkerRef });
+
+  if (webhookDeliveryEnabled) {
+    const { createWebhookDeliveryWorker } = await import('./workers/webhook-delivery.worker.js');
+    const outbox = await import('./infrastructure/database/webhook-outbox.repository.js');
+    const { recordOperationalEventSafe } = await import('./infrastructure/database/operational-event.repository.js');
+    const log = (message, meta) => console.log(JSON.stringify({
+      time: new Date().toISOString(),
+      message,
+      ...meta
+    }));
+
+    const worker = createWebhookDeliveryWorker({
+      db: pool,
+      outbox,
+      resolveDestination: async (event) => {
+        if (event.tenantId) {
+          const tenantDestination = await services.webhookEndpoints.resolveForDelivery({
+            tenantId: event.tenantId,
+            eventType: event.eventType
+          });
+          if (tenantDestination) return tenantDestination;
+        }
+        if (legacyWebhookEndpoint && legacyWebhookSecret) {
+          return { endpointUrl: legacyWebhookEndpoint, secret: legacyWebhookSecret };
+        }
+        return null;
+      },
+      onDelivered: (event, meta) => recordOperationalEventSafe(pool, {
+        eventType: 'webhook.delivered',
+        tenantId: event.tenantId,
+        network: event.network,
+        walletPublicKey: event.walletPublicKey,
+        hdWalletId: event.hdWalletId,
+        payload: {
+          webhookEventId: event.eventId,
+          webhookEventType: event.eventType,
+          httpStatus: meta.httpStatus
+        }
+      }, log),
+      onFailed: (event, meta) => recordOperationalEventSafe(pool, {
+        eventType: 'webhook.failed',
+        tenantId: event.tenantId,
+        network: event.network,
+        walletPublicKey: event.walletPublicKey,
+        hdWalletId: event.hdWalletId,
+        payload: {
+          webhookEventId: event.eventId,
+          webhookEventType: event.eventType,
+          reason: meta.reason ?? meta.error ?? null
+        }
+      }, log),
+      log
+    });
+
+    let running = false;
+    const timer = setInterval(async () => {
+      if (running || shuttingDown) return;
+      running = true;
+      try {
+        await worker.runOnce();
+      } catch (error) {
+        log('webhook.worker_error', { message: error.message });
+      } finally {
+        running = false;
+      }
+    }, webhookDeliveryIntervalMs);
+    timer.unref?.();
+
+    webhookWorker = {
+      metrics: worker.metrics,
+      runOnce: worker.runOnce,
+      async stop() {
+        clearInterval(timer);
+      }
+    };
+    webhookWorkerRef.current = webhookWorker;
+  }
 
   if (scannerEnabled) {
     worker = createDepositScannerWorker({
@@ -149,7 +246,11 @@ try {
     withdrawalReconciliationWorker,
     withdrawalReconciliationEnabled,
     network: scannerNetwork,
-    scope: scannerScope
+    scope: scannerScope,
+    queueDepth: async () => {
+      const { countPending } = await import('./infrastructure/database/webhook-outbox.repository.js');
+      return countPending(pool);
+    }
   });
 
   server = buildServer({ services, health });
@@ -172,6 +273,11 @@ try {
     console.log(`Deposit reconciliation started (network=${scannerNetwork})`);
   } else {
     console.log('Deposit reconciliation disabled (DEPOSIT_RECONCILIATION_ENABLED is not "true")');
+  }
+  if (webhookWorker) {
+    console.log(`Webhook delivery worker started (interval=${webhookDeliveryIntervalMs}ms)`);
+  } else {
+    console.log('Webhook delivery disabled (WEBHOOK_DELIVERY_ENABLED is not "true")');
   }
 
   console.log(`Wallet API listening on http://${host}:${port}`);

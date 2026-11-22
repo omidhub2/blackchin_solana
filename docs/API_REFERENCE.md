@@ -2,7 +2,7 @@
 
 This document describes endpoints that exist in the current code. It is not the future multi-tenant partner API contract. The target partner API, tenant authentication and webhook model are specified in `PRODUCT_SPECIFICATION.md` and `ARCHITECTURE.md`.
 
-> **Important:** current authentication uses one shared `API_ACCESS_KEY` for a trusted backend. It does not provide tenant isolation. Current chain support is native SOL on Solana only. Do not expose this API publicly to multiple companies.
+> **Important:** there are two authentication domains. Legacy `/api/v1/` routes use one shared `API_ACCESS_KEY` for a trusted backend. Partner routes under `/api/v1/tenant/` use tenant-scoped credentials with scopes and tenant isolation. The operator dashboard under `/api/v1/dashboard/` uses a separate session cookie. Current chain support is native SOL on Solana only.
 
 Base path: `/api/v1`. Every endpoint except `GET /health` requires
 `X-API-Key: <API_ACCESS_KEY>`.
@@ -244,3 +244,96 @@ mandatory `Idempotency-Key` header (16–128 chars of `A-Za-z0-9._:-`).
 - `409 WALLET_NOT_ACTIVE` / `409 NETWORK_MISMATCH`
 
 Rate limit 10/min. Idempotency details in `SECURITY.md`.
+
+---
+
+## Tenant HD wallet API
+
+All routes require a tenant API credential and the listed scope. The tenant ID
+is taken from the credential, never the body.
+
+| Method | Path | Scope |
+|---|---|---|
+| `POST` | `/api/v1/tenant/hd-wallets` | `wallets:write` |
+| `GET` | `/api/v1/tenant/hd-wallets/:id` | `wallets:read` |
+| `PATCH` | `/api/v1/tenant/hd-wallets/:id` | `wallets:write` |
+| `POST` | `/api/v1/tenant/hd-wallets/:id/accounts` | `addresses:write` |
+| `GET` | `/api/v1/tenant/hd-wallets/:id/accounts` | `wallets:read` |
+| `GET` | `/api/v1/tenant/hd-wallets/:id/accounts/:accountIndex` | `wallets:read` |
+| `POST` | `/api/v1/tenant/hd-wallets/:id/recovery-phrase/consume` | `wallets:write` |
+| `GET` | `/api/v1/tenant/withdrawals` | `withdrawals:read` |
+| `GET` | `/api/v1/tenant/withdrawals/:idempotencyKey` | `withdrawals:read` |
+| `POST` | `/api/v1/tenant/withdrawals/estimate` | `withdrawals:estimate` |
+| `POST` | `/api/v1/tenant/withdrawals` | `withdrawals:submit` |
+| `GET` | `/api/v1/tenant/deposits` | `deposits:read` |
+| `GET` | `/api/v1/tenant/deposits/:signature` | `deposits:read` |
+| `GET` | `/api/v1/tenant/monitoring/deposits` | `deposits:read` |
+
+---
+
+## Operator dashboard API
+
+Base path: `/api/v1/dashboard`. Authentication uses the
+`bc_dashboard_session` HTTP-only cookie. Mutating requests also require
+`X-CSRF-Token` matching the session-bound token.
+
+### Authentication
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/auth/login` | `{ email, password }`; sets session + CSRF cookies |
+| `POST` | `/auth/logout` | Revokes the session |
+| `GET` | `/auth/session` | Returns the operator, expiry and CSRF token |
+
+### Read models
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/overview?range=24h\|7d\|30d` | Counters, series, service health, recent events, cursor |
+| `GET` | `/wallets?type=hd\|child\|hot` | Wallet inventory |
+| `GET` | `/addresses` | Address registry |
+| `GET` | `/deposits` | Deposit evidence |
+| `GET` | `/withdrawals` | Withdrawal intents |
+| `GET` | `/transactions` | Unified transaction evidence |
+| `GET` | `/activity` | Operational events |
+| `GET` | `/webhooks` | Outbox delivery events |
+| `GET` | `/webhooks/endpoints?tenantId=` | Tenant webhook endpoints |
+| `GET` | `/credentials` | API credentials |
+| `GET` | `/tenants` | Tenant list |
+| `GET` | `/security` | Policies, credentials and hot wallets |
+| `GET` | `/network` | RPC probe, scanner cursors and asset scope |
+| `GET` | `/stream` | SSE snapshot + operational event stream |
+
+### Mutations (operator/admin)
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/tenants/:tenantId/hd-wallets` | Create a tenant HD root; recovery token returned once |
+| `POST` | `/tenants/:tenantId/hd-wallets/:id/accounts` | Derive 1–50 child accounts |
+| `PATCH` | `/tenants/:tenantId/hd-wallets/:id` | Update root status |
+| `POST` | `/hot-wallets` | Register a tenant HD child as a hot wallet |
+| `POST` | `/hot-wallets/:publicKey/freeze` | Freeze with a required reason |
+| `POST` | `/hot-wallets/:publicKey/unfreeze` | Restore signing |
+| `POST` | `/webhooks` | Create a tenant endpoint; secret returned once |
+| `POST` | `/webhooks/:id/rotate` | Rotate the signing secret |
+| `PATCH` | `/webhooks/:id` | Enable/disable an endpoint |
+| `POST` | `/webhooks/events/:eventId/retry` | Replay a failed/discarded/delivered event |
+
+### Mutations (admin only)
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/tenants/:tenantId/credentials` | Issue a scoped tenant API key; returned once |
+| `POST` | `/credentials/:credentialId/revoke` | Revoke an active credential |
+
+### SSE protocol
+
+See `REALTIME_DASHBOARD.md`. The stream emits `snapshot`, `operational`,
+`stream_error` events and heartbeat comments. `id` is the numeric
+`operational_events.id`; `eventId` is the UUID used for deduplication.
+
+### Webhook signature
+
+`X-Blackchin-Signature: t=<unixSeconds>,v1=<hexHmac>` where the HMAC-SHA256
+input is `<timestamp>.<eventId>.<rawJsonBody>`. Consumers must verify the
+signature, enforce a timestamp tolerance and deduplicate by event ID.

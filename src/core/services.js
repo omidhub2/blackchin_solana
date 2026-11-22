@@ -19,6 +19,10 @@ import { createTenantWithdrawalService } from './withdrawals/tenant-withdrawal.s
 import { createWithdrawalReconciliationService } from './withdrawals/withdrawal-reconciliation.service.js';
 import { createTransactionService } from './transactions/transaction-history.service.js';
 import { standaloneWalletService } from './wallet/standalone-wallet.service.js';
+import { createDashboardAuthService } from './dashboard/dashboard-auth.service.js';
+import { createDashboardService } from './dashboard/dashboard.service.js';
+import { createHotWalletService } from './hot-wallets/hot-wallet.service.js';
+import { createWebhookEndpointService } from './webhooks/webhook-endpoint.service.js';
 import {
   createDepositScanner,
   SCANNER_MAX_BATCH_DEFAULT,
@@ -44,8 +48,30 @@ export function createServices(overrides = {}) {
 
   const hdWalletService = createHdWalletService(deps);
   const childWalletService = createChildWalletService(deps);
+  const hotWalletService = createHotWalletService({
+    db: deps.db,
+    network: deps.network,
+    log: deps.log ?? (() => {})
+  });
+  const dashboardAuth = createDashboardAuthService({
+    db: deps.db,
+    log: deps.log ?? (() => {})
+  });
+  const dashboard = createDashboardService({
+    db: deps.db,
+    rpc: deps.rpc,
+    network: deps.network,
+    commitment: deps.commitment,
+    webhookWorkerRef: overrides.webhookWorkerRef ?? null,
+    now: deps.now
+  });
+  const webhookEndpoints = createWebhookEndpointService({
+    db: deps.db,
+    cipher,
+    log: deps.log ?? (() => {})
+  });
 
-  const depositService = createDepositService(deps);
+  const depositService = createDepositService({ ...deps, log: deps.log ?? (() => {}) });
   const withdrawalReconciliation = createWithdrawalReconciliationService({
     db: deps.db,
     rpc: deps.rpc,
@@ -78,8 +104,13 @@ export function createServices(overrides = {}) {
     deps,
     hdWallets: hdWalletService,
     childWallets: childWalletService,
-    tenantWallets: createTenantWalletService(deps),
-    tenantWithdrawals: createTenantWithdrawalService(deps),
+    hotWallets: hotWalletService,
+    tenantWallets: createTenantWalletService({ ...deps, log: deps.log ?? (() => {}) }),
+    tenantWithdrawals: createTenantWithdrawalService({
+      ...deps,
+      hotWallets: hotWalletService,
+      log: deps.log ?? (() => {})
+    }),
     balances: createBalanceService(deps),
     deposits: depositService,
     withdrawals: createWithdrawalService(deps),
@@ -87,6 +118,9 @@ export function createServices(overrides = {}) {
     transactions: createTransactionService(deps),
     standaloneWallets: standaloneWalletService,
     depositScanner: scanner,
-    depositReconciliation
+    depositReconciliation,
+    dashboard,
+    dashboardAuth,
+    webhookEndpoints
   });
 }

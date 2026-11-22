@@ -22,6 +22,8 @@ import {
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
 import { resolveWallet } from '../../infrastructure/security/wallet-signer.js';
 import { resolveDepositWalletForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
+import { emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
+import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
 
 const COMMITMENT_RANK = { detected: 1, confirming: 2, confirmed: 3, credited: 4 };
 
@@ -43,7 +45,7 @@ function toRpcError(error) {
   return mapped;
 }
 
-export function createDepositService({ db, rpc, network, commitment }) {
+export function createDepositService({ db, rpc, network, commitment, log = () => {} }) {
   async function resolveDepositWallet(publicKey, tenantId = null) {
     if (tenantId !== null && tenantId !== undefined) {
       return resolveDepositWalletForTenant(db, tenantId, publicKey);
@@ -319,7 +321,39 @@ export function createDepositService({ db, rpc, network, commitment }) {
         }
       });
 
-      if (inserted.created) return inserted;
+      if (inserted.created) {
+        const confirmed = status === 'confirmed' || status === 'credited';
+        await emitEventSafe(db, {
+          eventType: confirmed ? 'deposit.confirmed' : 'deposit.detected',
+          tenantId,
+          network,
+          walletPublicKey: publicKey,
+          hdWalletId,
+          payload: {
+            signature,
+            walletPublicKey: publicKey,
+            amountLamports: String(lamports),
+            network,
+            slot,
+            status,
+            confirmations
+          }
+        }, log);
+        await recordOperationalEventSafe(db, {
+          eventType: confirmed ? 'deposit.confirmed' : 'deposit.detected',
+          tenantId,
+          network,
+          walletPublicKey: publicKey,
+          hdWalletId,
+          payload: {
+            signature,
+            amountLamports: String(lamports),
+            status,
+            slot
+          }
+        }, log);
+        return inserted;
+      }
 
       if (tenantId === null || tenantId === undefined) {
         const unassignedExisting = await findDeposit(signature, publicKey);
@@ -431,6 +465,28 @@ export function createDepositService({ db, rpc, network, commitment }) {
         const raced = await findDeposit(signature, publicKey);
         return { deposit: raced, created: false, status: raced?.status ?? null };
       }
+
+      await emitEventSafe(db, {
+        eventType: 'deposit.confirmed',
+        network,
+        walletPublicKey: publicKey,
+        hdWalletId: view.wallet.hdWalletId,
+        payload: {
+          signature,
+          walletPublicKey: publicKey,
+          amountLamports: view.totalLamports,
+          network,
+          slot: view.slot,
+          status: recordedStatus
+        }
+      }, log);
+      await recordOperationalEventSafe(db, {
+        eventType: 'deposit.confirmed',
+        network,
+        walletPublicKey: publicKey,
+        hdWalletId: view.wallet.hdWalletId,
+        payload: { signature, amountLamports: view.totalLamports, status: recordedStatus }
+      }, log);
 
       return { deposit: inserted.transaction, created: true, status: recordedStatus };
     },

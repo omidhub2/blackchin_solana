@@ -13,6 +13,8 @@ import {
   findTransactionBySignatureForTenant,
   insertBlockchainTransaction
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
+import { emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
+import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 
@@ -51,7 +53,12 @@ function mapWithdrawalRecord(row) {
     response: row.response_json ?? null, createdAt: row.created_at, updatedAt: row.updated_at
   };
 }
-export function createTenantWithdrawalService({ db, rpc, network, commitment, cipher, tenantWithdrawalPolicy = null }) {
+export function createTenantWithdrawalService({
+  db, rpc, network, commitment, cipher,
+  tenantWithdrawalPolicy = null,
+  hotWallets = null,
+  log = () => {}
+}) {
   if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
     throw new TypeError('A PostgreSQL database pool is required');
   }
@@ -186,6 +193,13 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
 
       const wallet = await requireWallet(tenantId, fromPublicKey);
       const amountLamports = parseAmountLamports(amountSol);
+
+      // A designated hot wallet must be active, signing-enabled and within its
+      // single-transfer ceiling before any policy check, reservation or signing.
+      if (hotWallets && typeof hotWallets.assertCanSpend === 'function') {
+        await hotWallets.assertCanSpend({ tenantId, publicKey: fromPublicKey, amountLamports });
+      }
+
       const authorization = await tenantWithdrawalPolicy.authorize({
         tenantId, credentialId, approvalReference, wallet,
         fromPublicKey, toPublicKey, amountLamports, network, idempotencyKey
@@ -199,6 +213,30 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
         walletPublicKey: fromPublicKey, toPublicKey, amountLamports
       });
       if (!reservation.reserved) return { ...reservation.replay, replayed: true };
+
+      await emitEventSafe(db, {
+        eventType: 'withdrawal.accepted',
+        tenantId,
+        network,
+        walletPublicKey: fromPublicKey,
+        hdWalletId: wallet.hdWalletId,
+        payload: {
+          idempotencyKey,
+          fromPublicKey,
+          toPublicKey,
+          amountLamports,
+          network,
+          approvalReference
+        }
+      }, log);
+      await recordOperationalEventSafe(db, {
+        eventType: 'withdrawal.accepted',
+        tenantId,
+        network,
+        walletPublicKey: fromPublicKey,
+        hdWalletId: wallet.hdWalletId,
+        payload: { idempotencyKey, amountLamports, toPublicKey }
+      }, log);
 
       let signaturePersisted = false;
       let sent;
@@ -230,6 +268,14 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
         } else {
           error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
           error.message = 'Tenant withdrawal signature was persisted; do not retry with a new idempotency key. Reconciliation is required.';
+          await recordOperationalEventSafe(db, {
+            eventType: 'withdrawal.reconciliation_required',
+            tenantId,
+            network,
+            walletPublicKey: fromPublicKey,
+            hdWalletId: wallet.hdWalletId,
+            payload: { idempotencyKey, amountLamports }
+          }, log);
         }
         throw error;
       }
@@ -288,6 +334,38 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
       } finally {
         client.release();
       }
+
+      await emitEventSafe(db, {
+        eventType: 'withdrawal.broadcast',
+        tenantId,
+        network,
+        walletPublicKey: fromPublicKey,
+        hdWalletId: wallet.hdWalletId,
+        payload: {
+          idempotencyKey,
+          signature: response.signature,
+          fromPublicKey,
+          toPublicKey,
+          amountLamports: response.amountLamports,
+          network,
+          slot: response.slot,
+          confirmationStatus: response.confirmationStatus
+        }
+      }, log);
+      await recordOperationalEventSafe(db, {
+        eventType: 'withdrawal.broadcast',
+        tenantId,
+        network,
+        walletPublicKey: fromPublicKey,
+        hdWalletId: wallet.hdWalletId,
+        payload: {
+          idempotencyKey,
+          signature: response.signature,
+          amountLamports: response.amountLamports,
+          toPublicKey
+        }
+      }, log);
+
       return response;
     }
   });

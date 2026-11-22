@@ -37,6 +37,8 @@ import {
   validateAccountIndex
 } from '../../blockchain/solana/hd/derivation.js';
 import { ACCOUNT_STATUSES } from '../../infrastructure/database/wallet-account.repository.js';
+import { emitEvent } from '../../infrastructure/database/webhook-outbox.repository.js';
+import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
 
 const HD_WALLET_STATUSES = Object.freeze(['active', 'provisioning', 'disabled', 'archived']);
 const MAX_BATCH_SIZE = 50;
@@ -68,7 +70,7 @@ function mapUniqueViolation(error) {
 }
 
 export function createTenantWalletService({
-  db, cipher, keyProvider, network, now = () => new Date()
+  db, cipher, keyProvider, network, now = () => new Date(), log = () => {}
 }) {
   if (!db || typeof db.connect !== 'function') throw new TypeError('A database pool is required');
   if (!cipher || typeof cipher.encrypt !== 'function' || typeof cipher.decrypt !== 'function') {
@@ -143,8 +145,27 @@ export function createTenantWalletService({
         if (persisted !== 1) {
           throw new AppError('Recovery token could not be persisted', 500, 'RECOVERY_TOKEN_PERSISTENCE_FAILED');
         }
+        await emitEvent(client, {
+          eventType: 'wallet.created',
+          tenantId,
+          network,
+          hdWalletId: created.id,
+          payload: {
+            walletId: String(created.id),
+            label,
+            network,
+            status: 'active'
+          }
+        });
         await client.query('COMMIT');
         const stored = await requireHdWallet(tenantId, created.id);
+        await recordOperationalEventSafe(db, {
+          eventType: 'wallet.created',
+          tenantId,
+          network,
+          hdWalletId: created.id,
+          payload: { walletId: String(created.id), label, network }
+        }, log);
         return {
           wallet: toHdWalletMetadata(stored),
           recovery: {
@@ -253,7 +274,38 @@ export function createTenantWalletService({
           network: hdWallet.network,
           scheme: hdWallet.derivationScheme
         })));
+        for (const account of accounts) {
+          await emitEvent(client, {
+            eventType: 'wallet.child.created',
+            tenantId,
+            network: hdWallet.network,
+            walletPublicKey: account.publicKey,
+            hdWalletId,
+            payload: {
+              accountId: account.id,
+              hdWalletId: String(hdWalletId),
+              publicKey: account.publicKey,
+              accountIndex: account.accountIndex,
+              derivationPath: account.derivationPath,
+              network: hdWallet.network
+            }
+          });
+        }
         await client.query('COMMIT');
+        for (const account of accounts) {
+          await recordOperationalEventSafe(db, {
+            eventType: 'wallet.child.created',
+            tenantId,
+            network: hdWallet.network,
+            walletPublicKey: account.publicKey,
+            hdWalletId,
+            payload: {
+              accountId: account.id,
+              accountIndex: account.accountIndex,
+              publicKey: account.publicKey
+            }
+          }, log);
+        }
         return { hdWalletId: String(hdWalletId), accounts, nextAccountIndex: hdWallet.nextAccountIndex };
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {});
@@ -301,6 +353,13 @@ export function createTenantWalletService({
       if (!ACCOUNT_STATUSES.includes(status)) throw conflict('Invalid wallet account status', 'INVALID_ACCOUNT_STATUS');
       const updated = await updateAccountStatusForTenant(db, tenantId, publicKey, status);
       if (!updated) throw notFound('Wallet account was not found', 'WALLET_ACCOUNT_NOT_FOUND');
+      await recordOperationalEventSafe(db, {
+        eventType: 'wallet.status_changed',
+        tenantId,
+        network: updated.network,
+        hdWalletId,
+        payload: { walletId: String(hdWalletId), status }
+      }, log);
       return updated;
     },
 

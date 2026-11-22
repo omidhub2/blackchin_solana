@@ -37,8 +37,9 @@ export const DEFAULT_BACKOFF_MAX_MS = 30 * 60 * 1000;
 export function createWebhookDeliveryWorker({
   db,
   outbox,
-  endpoint,
-  secret,
+  endpoint = null,
+  secret = null,
+  resolveDestination = null,
   timeoutMs = 10_000,
   batchSize = 20,
   backoffBaseMs = DEFAULT_BACKOFF_BASE_MS,
@@ -46,10 +47,17 @@ export function createWebhookDeliveryWorker({
   maxAttempts,
   fetchImpl = globalThis.fetch,
   log = () => { },
+  onDelivered = null,
+  onFailed = null,
   now = () => Date.now()
 }) {
-  if (typeof secret !== 'string' || secret.length < 32) {
-    throw new TypeError('Webhook secret must be at least 32 characters');
+  if (typeof resolveDestination !== 'function') {
+    if (typeof secret !== 'string' || secret.length < 32) {
+      throw new TypeError('Webhook secret must be at least 32 characters');
+    }
+    if (typeof endpoint !== 'string' || endpoint.length === 0) {
+      throw new TypeError('A webhook endpoint is required');
+    }
   }
 
   if (typeof fetchImpl !== 'function') {
@@ -77,8 +85,27 @@ export function createWebhookDeliveryWorker({
   }
 
   async function deliverOne(event) {
+    const destinationConfig = typeof resolveDestination === 'function'
+      ? await resolveDestination(event)
+      : { endpointUrl: endpoint, secret };
+
+    if (!destinationConfig || typeof destinationConfig.endpointUrl !== 'string' ||
+        typeof destinationConfig.secret !== 'string' || destinationConfig.secret.length < 32) {
+      metrics.blocked += 1;
+      await outbox.markFailed(db, event.id, {
+        httpStatus: null,
+        error: 'no_delivery_destination',
+        discard: true
+      });
+      log('webhook.destination_missing', { eventId: event.eventId });
+      if (typeof onFailed === 'function') {
+        await Promise.resolve(onFailed(event, { reason: 'no_delivery_destination' })).catch(() => {});
+      }
+      return { delivered: false, reason: 'no_delivery_destination' };
+    }
+
     // Re-validate on every attempt: DNS may have been re-pointed since claim.
-    const destination = await validateWebhookDestination(endpoint);
+    const destination = await validateWebhookDestination(destinationConfig.endpointUrl);
 
     if (!destination.ok) {
       metrics.blocked += 1;
@@ -90,12 +117,15 @@ export function createWebhookDeliveryWorker({
       });
 
       log('webhook.destination_rejected', { eventId: event.eventId, reason: destination.reason });
+      if (typeof onFailed === 'function') {
+        await Promise.resolve(onFailed(event, { reason: destination.reason })).catch(() => {});
+      }
       return { delivered: false, reason: destination.reason };
     }
 
     const body = JSON.stringify(event.payload);
     const signatureHeader = buildSignatureHeader({
-      secret,
+      secret: destinationConfig.secret,
       eventId: event.eventId,
       body,
       timestamp: Math.floor(now() / 1000)
@@ -136,6 +166,9 @@ export function createWebhookDeliveryWorker({
 
       metrics.delivered += 1;
       log('webhook.delivered', { eventId: event.eventId, status: response.status });
+      if (typeof onDelivered === 'function') {
+        await Promise.resolve(onDelivered(event, { httpStatus: response.status })).catch(() => {});
+      }
 
       return { delivered: true, httpStatus: response.status };
     }
@@ -161,6 +194,9 @@ export function createWebhookDeliveryWorker({
 
       metrics.discarded += 1;
       log('webhook.discarded', { eventId: event.eventId, attempts, error });
+      if (typeof onFailed === 'function') {
+        await Promise.resolve(onFailed(event, { error, attempts })).catch(() => {});
+      }
 
       return { delivered: false, discarded: true, httpStatus, error };
     }

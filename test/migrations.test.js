@@ -171,6 +171,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0010'));
   assert.ok(versions.includes('0011'));
   assert.ok(versions.includes('0012'));
+  assert.ok(versions.includes('0013'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -311,4 +312,27 @@ test('0012 creates fail-closed tenant withdrawal policy, approval and append-onl
   assert.match(sql, /network IN \('devnet', 'testnet', 'mainnet-beta'\)/i);
   assert.match(sql, /Deliberately do not create policy rows for existing tenants/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+});
+
+test('0013 adds dashboard identity, durable operational events, tenant webhooks and hot wallets', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0013_dashboard_realtime_platform.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS dashboard_users/i);
+  assert.match(sql, /password_hash TEXT NOT NULL/i);
+  assert.match(sql, /role IN \('admin', 'operator', 'viewer'\)/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS dashboard_sessions/i);
+  assert.match(sql, /token_hash BYTEA NOT NULL CHECK \(octet_length\(token_hash\) = 32\)/i);
+  assert.match(sql, /csrf_token_hash BYTEA NOT NULL/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS operational_events/i);
+  assert.match(sql, /BEFORE UPDATE OR DELETE ON operational_events/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS tenant_webhook_endpoints/i);
+  assert.match(sql, /secret_encrypted TEXT NOT NULL/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS hot_wallets/i);
+  assert.match(sql, /signing_enabled BOOLEAN NOT NULL DEFAULT TRUE/i);
+  assert.match(sql, /prevent_hot_wallet_rebinding/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+  assert.doesNotMatch(sql, /(?:customer|partner)_balance/i);
 });

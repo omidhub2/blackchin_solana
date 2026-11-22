@@ -16,21 +16,26 @@ export const OUTBOX_STATUSES = Object.freeze([
 ]);
 
 export const WEBHOOK_EVENT_TYPES = Object.freeze([
+  'wallet.created',
+  'wallet.child.created',
   'deposit.detected',
   'deposit.confirmed',
   'deposit.credited',
   'deposit.failed',
+  'withdrawal.accepted',
   'withdrawal.created',
   'withdrawal.broadcast',
   'withdrawal.confirmed',
   'withdrawal.failed',
-  'transaction.under_review'
+  'transaction.under_review',
+  'transaction.status_changed'
 ]);
 
 const OUTBOX_COLUMNS = `
   id,
   event_id,
   event_type,
+  tenant_id,
   wallet_public_key,
   hd_wallet_id,
   network,
@@ -53,6 +58,7 @@ function mapOutboxRow(row) {
     id: String(row.id),
     eventId: row.event_id,
     eventType: row.event_type,
+    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id),
     walletPublicKey: row.wallet_public_key,
     hdWalletId: row.hd_wallet_id === null || row.hd_wallet_id === undefined
       ? null
@@ -111,6 +117,7 @@ export function assertPublishablePayload(value, depth = 0) {
 export async function emitEvent(db, {
   eventType,
   network,
+  tenantId = null,
   walletPublicKey = null,
   hdWalletId = null,
   payload,
@@ -130,19 +137,37 @@ export async function emitEvent(db, {
   const result = await db.query(
     `
       INSERT INTO webhook_outbox (
-        event_id, event_type, wallet_public_key, hd_wallet_id, network, payload, max_attempts
+        event_id, event_type, tenant_id, wallet_public_key, hd_wallet_id, network, payload, max_attempts
       )
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
       ON CONFLICT (event_id) DO NOTHING
       RETURNING ${OUTBOX_COLUMNS}
     `,
-    [eventId, eventType, walletPublicKey, hdWalletId, network, JSON.stringify(payload), maxAttempts]
+    [eventId, eventType, tenantId === null ? null : String(tenantId), walletPublicKey,
+      hdWalletId, network, JSON.stringify(payload), maxAttempts]
   );
 
   return {
     created: result.rowCount === 1,
     event: mapOutboxRow(result.rows[0])
   };
+}
+
+/**
+ * Best-effort emission for non-transactional call sites (for example a scanner
+ * observation that has already been persisted). A failure is logged and never
+ * rolls back or masks the underlying chain operation.
+ */
+export async function emitEventSafe(db, event, log = () => {}) {
+  try {
+    return await emitEvent(db, event);
+  } catch (error) {
+    log('webhook_outbox.emit_failed', {
+      eventType: event?.eventType ?? null,
+      message: error.message
+    });
+    return { created: false, event: null, error };
+  }
 }
 
 /**

@@ -6,7 +6,7 @@ BLACKCHIN CORE provides wallet infrastructure, deposit-address generation, block
 
 Partner companies own their customer relationship and internal financial accounting. BLACKCHIN operates the blockchain infrastructure and maintains the operational records required to secure, execute and reconcile blockchain activity.
 
-> **Implementation status:** the current codebase is a Solana-first implementation. Multi-tenant company authentication, tenant-isolated authorization, EVM/TRON adapters, token transfers, production key-management integration and a complete webhook delivery platform are target capabilities, not claims about the current release. See [Product Specification](docs/PRODUCT_SPECIFICATION.md) and [Architecture](docs/ARCHITECTURE.md).
+> **Implementation status:** Solana-first. Tenant-authenticated partner routes, tenant-isolated HD wallets, native SOL deposits/withdrawals, durable signed webhooks and a real-time Next.js operator dashboard are implemented. Production KMS/HSM signing, a reviewed tenant withdrawal policy provider, EVM/TRON/token adapters and cloud provisioning remain external blockers. See [Product Scope](docs/PRODUCT_SCOPE.md) and [Architecture](docs/ARCHITECTURE.md).
 
 ## Responsibility boundary
 
@@ -44,9 +44,13 @@ BLACKCHIN does not decide whether a partner's end customer has sufficient intern
 - AES-256-GCM encrypted secret storage, one-time recovery provisioning and idempotent withdrawal handling.
 - Deposit and withdrawal reconciliation workers with PostgreSQL advisory locks and append-only evidence events.
 - Ordered, checksum-verified PostgreSQL migrations.
-- Initial tenant registry/hashed API credential schema foundation (not yet wired into runtime authentication or authorization).
+- Tenant registry, hashed API credentials, scopes, revocation and tenant-scoped repositories.
+- Durable webhook outbox with HMAC signatures, retries, tenant endpoints and replay.
+- Append-only operational events and a Server-Sent Events dashboard stream.
+- Hot-wallet registry with freeze controls and a single-transfer ceiling.
+- Next.js App Router operator dashboard with English/Persian and RTL support.
 
-**Not currently implemented:** production multi-tenant authentication/authorization/isolation (the additive tenant schema foundation exists but is not wired into runtime), EVM and TRON adapters, SPL/ERC-20/TRC-20 token operations, integrated KMS/HSM, full webhook delivery, partner-facing company administration, and a per-company operational asset attribution ledger. Do not expose the current single-credential API as a public multi-company service until the tenant-security phase is complete.
+**Not currently implemented / external blockers:** production KMS/HSM or isolated signer integration, a reviewed `tenantWithdrawalPolicy.authorize` provider, EVM/TRON/SPL token adapters, cloud infrastructure provisioning, and a per-company operational asset attribution ledger. The legacy `/api/v1/` routes still use the single trusted-backend `API_ACCESS_KEY`; partner integrations must use `/api/v1/tenant/`.
 
 ## Repository layout
 
@@ -59,6 +63,7 @@ migrations/           Forward-only SQL migrations
 scripts/              Migration and operational scripts
 test/                 Unit, API, database and worker tests
 docs/                 Product, architecture, API, security, schema and operations
+apps/wallet-web/      Next.js App Router operator dashboard
 ```
 
 ## Requirements and local setup
@@ -77,11 +82,34 @@ npm run api:start
 
 Health endpoint: `GET /health`.
 
+Create the first dashboard operator:
+
+```bash
+npm run dashboard:user -- --email=ops@example.com --password='<12+ chars>' --name='Operations' --role=admin
+```
+
+Run the dashboard:
+
+```bash
+cd apps/wallet-web
+npm install
+BLACKCHIN_API_URL=http://127.0.0.1:3000 npm run dev
+```
+
+The Next.js app proxies `/api/v1/dashboard/*` to the Fastify origin so the
+session cookie stays same-origin.
+
 ## Documentation
 
 - [Product Specification](docs/PRODUCT_SPECIFICATION.md) — definitive product scope and company/core responsibility boundary.
+- [Product Scope](docs/PRODUCT_SCOPE.md) — phase 1 scope, status matrix and non-goals.
 - [Architecture](docs/ARCHITECTURE.md) — target system architecture, tenancy, data flow and service boundaries.
 - [API Reference](docs/API_REFERENCE.md) — currently implemented HTTP contracts and their limitations.
+- [Database Design](docs/DATABASE_DESIGN.md) — current schema, migrations and integrity rules.
+- [Security Architecture](docs/SECURITY_ARCHITECTURE.md) — authentication domains, signing, withdrawal and webhook controls.
+- [Deployment](docs/DEPLOYMENT.md) — cloud topology, configuration, migrations and rollback.
+- [Real-Time Dashboard](docs/REALTIME_DASHBOARD.md) — SSE protocol, replay and dashboard pages.
+- [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) — delivered phases and remaining blockers.
 - [Security](docs/SECURITY.md) — current security posture and mandatory controls before multi-tenant production.
 - [Database Schema](docs/DATABASE_SCHEMA.md) — current schema and migration history.
 - [HD Wallet Architecture](docs/HD_WALLET_ARCHITECTURE.md) — current Solana HD implementation.
