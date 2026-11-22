@@ -89,6 +89,7 @@ function parsedTransfer({ source = SENDER, destination = RECIPIENT, lamports = 2
     slot: 123,
     blockTime: 1_700_000_000,
     transaction: {
+      signatures: [SIGNATURE],
       message: {
         accountKeys: [{ pubkey: SENDER }],
         instructions: [{
