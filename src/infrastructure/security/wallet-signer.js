@@ -53,6 +53,7 @@ export async function resolveWallet(db, publicKey) {
 
     return {
       publicKey: account.publicKey,
+      tenantId: account.tenantId ?? null,
       walletType: 'hd_child',
       status: account.status,
       effectiveStatus: account.status === 'active' && parentStatus === 'active'
@@ -71,6 +72,7 @@ export async function resolveWallet(db, publicKey) {
   if (legacy) {
     return {
       publicKey: legacy.publicKey,
+      tenantId: legacy.tenantId ?? null,
       walletType: 'standalone',
       status: 'active',
       effectiveStatus: 'active',
