@@ -145,7 +145,11 @@ export function createDepositScanner({
       // transactions still reported as processed, enforce the configured
       // number of observed confirmations before advancing to confirmed.
       if (status?.confirmationStatus === 'confirmed') {
-        return { status: 'confirmed', commitment: 'confirmed', confirmations };
+        if (confirmations === null || confirmations >= confirmationsRequired) {
+          return { status: 'confirmed', commitment: 'confirmed', confirmations };
+        }
+
+        return { status: 'confirming', commitment: 'confirmed', confirmations };
       }
 
       if (confirmations !== null && confirmations >= confirmationsRequired) {
