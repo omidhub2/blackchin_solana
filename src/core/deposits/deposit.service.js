@@ -161,7 +161,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
      * Return deposit address metadata for a wallet.
      */
     async getDepositAddress(publicKey) {
-      const wallet = await resolveDepositWallet(publicKey, tenantId);
+      const wallet = await resolveWallet(db, publicKey);
 
       if (!wallet) {
         throw notFound(
@@ -261,7 +261,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
         throw conflict('Counterparty does not match the verified transfer details', 'COUNTERPARTY_MISMATCH');
       }
 
-      const wallet = await resolveWallet(db, publicKey);
+      const wallet = await resolveDepositWallet(publicKey, tenantId);
       if (!wallet) {
         throw notFound('Wallet address was not found in the local wallet database', 'WALLET_NOT_FOUND');
       }
