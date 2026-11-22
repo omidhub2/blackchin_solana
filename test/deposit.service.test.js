@@ -190,6 +190,7 @@ test('previously credited deposits enter review when missing from chain and reco
     updated_at: new Date()
   };
   let parsed = null;
+  let chainStatus = 'finalized';
   const db = {
     async query(sql, params) {
       if (sql.includes('FROM blockchain_transactions') && sql.includes('WHERE signature = $1')) {
@@ -216,7 +217,7 @@ test('previously credited deposits enter review when missing from chain and reco
   const rpc = {
     async getParsedTransaction() { return parsed; },
     async getSignatureStatuses() {
-      return { value: [{ confirmationStatus: 'finalized', confirmations: null, err: null }] };
+      return { value: [{ confirmationStatus: chainStatus, confirmations: null, err: null }] };
     },
     extractIncomingTransfers() { return [transfer()]; }
   };
@@ -231,4 +232,14 @@ test('previously credited deposits enter review when missing from chain and reco
   assert.equal(recovered.status, 'credited');
   assert.equal(recovered.failureReason, null);
   assert.equal(recovered.metadata.chainVerification, 'present');
+
+  chainStatus = 'confirmed';
+  const regressed = await service.refreshDeposit(signature, destination);
+  assert.equal(regressed.status, 'under_review');
+  assert.match(regressed.failureReason, /no longer verifiable/i);
+
+  chainStatus = 'finalized';
+  const finalizedAgain = await service.refreshDeposit(signature, destination);
+  assert.equal(finalizedAgain.status, 'credited');
+  assert.equal(finalizedAgain.failureReason, null);
 });
