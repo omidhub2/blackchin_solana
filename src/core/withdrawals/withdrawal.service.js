@@ -229,7 +229,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
                 `
                   UPDATE api_idempotency_keys
                   SET transaction_signature = $2, updated_at = NOW()
-                  WHERE idempotency_key = $1
+                  WHERE idempotency_key = $1 AND tenant_id IS NULL
                     AND status = 'processing'
                     AND transaction_signature IS NULL
                     AND network = $3
@@ -297,7 +297,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
                 response_json = $2::jsonb,
                 transaction_signature = $3,
                 updated_at = NOW()
-            WHERE idempotency_key = $1
+            WHERE idempotency_key = $1 AND tenant_id IS NULL
               AND network = $4
           `,
           [idempotencyKey, JSON.stringify(response), sent.signature, network]
