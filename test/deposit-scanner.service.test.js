@@ -35,6 +35,11 @@ test('scanner keeps independent cursors per address and refreshes known deposits
         lastSlot: position.lastSlot
       };
     },
+    async completeBackfill(_db, id, position) {
+      advanced.push({ id, ...position, completedBackfill: true });
+      return { lastSignature: position.lastSignature, lastSlot: position.lastSlot };
+    },
+    async saveBackfillProgress() { throw new Error('Unexpected backfill in this test'); },
     async markCursorError(_db, id, message) {
       throw new Error(`Unexpected cursor error for ${id}: ${message}`);
     }
@@ -58,6 +63,7 @@ test('scanner keeps independent cursors per address and refreshes known deposits
     commitment: 'confirmed',
     async getRecentSignatures(address, options) {
       pageCalls.push({ address, options });
+      if (options.before) return [];
       return [{
         signature: address === addressA ? 'known-deposit-A' : 'new-deposit-B',
         slot: address === addressA ? 10 : 20,
@@ -141,6 +147,11 @@ test('scanner paginates with before and stores the newest fully handled signatur
       cursorUpdates.push(position);
       return { lastSignature: position.lastSignature, lastSlot: position.lastSlot };
     },
+    async completeBackfill(_db, _id, position) {
+      cursorUpdates.push(position);
+      return { lastSignature: position.lastSignature, lastSlot: position.lastSlot };
+    },
+    async saveBackfillProgress() { throw new Error('Unexpected backfill in this test'); },
     async markCursorError(_db, _id, message) {
       throw new Error(message);
     }
@@ -185,9 +196,118 @@ test('scanner paginates with before and stores the newest fully handled signatur
   assert.deepEqual(pageOptions.map((item) => item.before ?? null), [
     null,
     'newest-signature',
+    'newest-signature',
     'older-signature'
   ]);
   assert.equal(cursorUpdates.length, 1);
   assert.equal(cursorUpdates[0].lastSignature, 'newest-signature');
   assert.equal(summary.stopped, undefined);
+});
+
+
+test('scanner resumes a maxBatch backfill across runs and publishes high-water only when drained', async () => {
+  const address = '11111111111111111111111111111111';
+  const state = {
+    lastSignature: 'old-anchor',
+    lastSlot: 1,
+    backfillAnchorSignature: null,
+    backfillBeforeSignature: null,
+    backfillHighWaterSignature: null,
+    backfillHighWaterSlot: null,
+    backfillHighWaterBlockTime: null
+  };
+  const calls = [];
+  const updates = [];
+  const entries = [
+    { signature: 'newest', slot: 4 },
+    { signature: 'older-1', slot: 3 },
+    { signature: 'older-2', slot: 2 }
+  ];
+  const cursors = {
+    async ensureCursor() { return { id: 'cursor-1', ...state }; },
+    async markCursorRunning() {},
+    async saveBackfillProgress(_db, _id, position) {
+      Object.assign(state, {
+        backfillAnchorSignature: position.anchorSignature,
+        backfillBeforeSignature: position.beforeSignature,
+        backfillHighWaterSignature: position.highWaterSignature,
+        backfillHighWaterSlot: position.highWaterSlot,
+        backfillHighWaterBlockTime: position.highWaterBlockTime
+      });
+      updates.push({ type: 'save', ...position });
+      return { lastSignature: state.lastSignature, lastSlot: state.lastSlot };
+    },
+    async advanceCursor(_db, _id, position) {
+      Object.assign(state, { lastSignature: position.lastSignature, lastSlot: position.lastSlot });
+      updates.push({ type: 'advance', ...position });
+      return { lastSignature: state.lastSignature, lastSlot: state.lastSlot };
+    },
+    async completeBackfill(_db, _id, position) {
+      Object.assign(state, {
+        lastSignature: position.lastSignature,
+        lastSlot: position.lastSlot,
+        backfillAnchorSignature: null,
+        backfillBeforeSignature: null,
+        backfillHighWaterSignature: null,
+        backfillHighWaterSlot: null,
+        backfillHighWaterBlockTime: null
+      });
+      updates.push({ type: 'complete', ...position });
+      return { lastSignature: state.lastSignature, lastSlot: state.lastSlot };
+    },
+    async markCursorError(_db, _id, message) { throw new Error(message); }
+  };
+  const rpc = {
+    network: 'devnet',
+    commitment: 'confirmed',
+    async getRecentSignatures(_address, options) {
+      calls.push({ ...options });
+      const startIndex = options.before
+        ? entries.findIndex((entry) => entry.signature === options.before) + 1
+        : 0;
+      const untilIndex = options.until
+        ? entries.findIndex((entry) => entry.signature === options.until)
+        : entries.length;
+      if (startIndex < 0 || untilIndex < 0 || startIndex >= untilIndex) return [];
+      return entries.slice(startIndex, Math.min(startIndex + options.limit, untilIndex));
+    },
+    async getParsedTransaction(signature) {
+      return { signature, slot: entries.find((entry) => entry.signature === signature).slot, meta: { err: null } };
+    },
+    async getSignatureStatuses() { return { value: [{ confirmationStatus: 'finalized', err: null }] }; },
+    extractIncomingTransfers() { return []; }
+  };
+  const deposits = {
+    async isRecorded() { return false; },
+    async refreshDeposit() {},
+    async recordVerifiedDeposit() { throw new Error('No transfer expected'); }
+  };
+  const scanner = createDepositScanner({
+    db: {},
+    rpc,
+    deposits,
+    cursors,
+    resolveWallets: async () => [{ publicKey: address, hdWalletId: null }],
+    pageSize: 1,
+    maxBatch: 1
+  });
+
+  const first = await scanner.scan({ network: 'devnet', scope: 'all' });
+  assert.equal(first.stopped, 'batch_limit');
+  assert.equal(state.lastSignature, 'old-anchor');
+  assert.equal(state.backfillBeforeSignature, 'newest');
+  assert.equal(state.backfillHighWaterSignature, 'newest');
+
+  const second = await scanner.scan({ network: 'devnet', scope: 'all' });
+  assert.equal(second.stopped, 'batch_limit');
+  assert.equal(state.lastSignature, 'old-anchor');
+  assert.equal(state.backfillBeforeSignature, 'older-1');
+
+  const third = await scanner.scan({ network: 'devnet', scope: 'all' });
+  assert.equal(third.stopped, undefined);
+  assert.equal(state.lastSignature, 'newest');
+  assert.equal(state.backfillBeforeSignature, null);
+  assert.equal(state.backfillHighWaterSignature, null);
+  assert.deepEqual(updates.map((item) => item.type), ['save', 'save', 'complete']);
+  assert.ok(calls.some((item) => item.until === 'old-anchor'));
 });
