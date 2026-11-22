@@ -147,6 +147,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+
+DROP TRIGGER IF EXISTS trg_tenant_api_credentials_tenant_immutable ON tenant_api_credentials;
+CREATE TRIGGER trg_tenant_api_credentials_tenant_immutable
+    BEFORE UPDATE OF tenant_id ON tenant_api_credentials
+    FOR EACH ROW EXECUTE FUNCTION prevent_tenant_reassignment();
+
 DROP TRIGGER IF EXISTS trg_wallets_tenant_immutable ON wallets;
 CREATE TRIGGER trg_wallets_tenant_immutable
     BEFORE UPDATE OF tenant_id ON wallets
