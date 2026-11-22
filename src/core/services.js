@@ -10,6 +10,7 @@ import { resolveDependencies } from '../infrastructure/dependencies.js';
 import * as depositScannerCursors from '../infrastructure/database/deposit-scanner.repository.js';
 import { createHdWalletService } from './hd-wallet/hd-wallet.service.js';
 import { createChildWalletService } from './wallets/child-wallet.service.js';
+import { createTenantWalletService } from './tenant-wallets/tenant-wallet.service.js';
 import { createBalanceService } from './balance/hd-balance.service.js';
 import { createDepositService } from './deposits/deposit.service.js';
 import { createDepositReconciliationService } from './deposits/deposit-reconciliation.service.js';
@@ -76,6 +77,7 @@ export function createServices(overrides = {}) {
     deps,
     hdWallets: hdWalletService,
     childWallets: childWalletService,
+    tenantWallets: createTenantWalletService(deps),
     balances: createBalanceService(deps),
     deposits: depositService,
     withdrawals: createWithdrawalService(deps),
