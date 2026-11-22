@@ -415,7 +415,11 @@ export function createDepositService({ db, rpc, network, commitment }) {
         slot: view.slot,
         blockTime: view.blockTime,
         failureReason: chainContradiction
-          ? (view.failureReason ?? 'Previously confirmed transaction is no longer verifiable; manual review required')
+          ? (view.failureReason ?? (
+            view.found
+              ? 'Transaction confirmation or finality regressed; manual review required'
+              : 'Previously confirmed transaction is no longer verifiable; manual review required'
+          ))
           : null,
         clearFailureReason: !chainContradiction,
         metadata: {
