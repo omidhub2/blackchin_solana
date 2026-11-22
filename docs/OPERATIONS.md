@@ -67,7 +67,7 @@ Before public partner onboarding:
 
 Migrations are ordered, checksum-verified and applied in a transaction per file. Never edit an applied migration. Back up before applying new migrations. Test migrations against a disposable PostgreSQL database and restore a backup in staging.
 
-Migration `0011_tenant_idempotency_namespace.sql` separates per-tenant idempotency keys from the legacy NULL-tenant namespace and records the authenticated credential plus partner approval reference for tenant withdrawals. Apply it only after a backup and migration review. Tenant withdrawal submission remains disabled until a trusted `tenantWithdrawalPolicy.authorize` provider is deployed and verified.
+Migration `0012_tenant_withdrawal_policy_foundation.sql` adds disabled-by-default tenant withdrawal policy, destination allowlist, credential-bound approval and append-only decision audit tables. It does not authorize withdrawals or create policies for existing tenants. Approval issuance must come from a separately authenticated control-plane integration; do not grant the API runtime broad policy/approval write access.\n\nMigration `0011_tenant_idempotency_namespace.sql` separates per-tenant idempotency keys from the legacy NULL-tenant namespace and records the authenticated credential plus partner approval reference for tenant withdrawals. Apply it only after a backup and migration review. Tenant withdrawal submission remains disabled until a trusted `tenantWithdrawalPolicy.authorize` provider is deployed and verified.
 
 For tenancy backfills, do not infer ownership from wallet labels or transaction history. Map existing data to a tenant only with verified evidence; otherwise quarantine it and prevent signing until an operator resolves ownership.
 
