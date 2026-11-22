@@ -35,6 +35,36 @@ function walletDb({ account = true, parent = true } = {}) {
   };
 }
 
+test('tenant withdrawal policy denial happens before idempotency reservation or signing', async () => {
+  const db = walletDb();
+  let policyCalls = 0;
+  const service = createTenantWithdrawalService({
+    db, network: 'devnet', commitment: 'confirmed', cipher: {},
+    tenantWithdrawalPolicy: { async authorize(input) { policyCalls += 1; assert.equal(input.tenantId, '42'); return false; } },
+    rpc: { async estimateTransfer() { return {}; }, async sendSolWithSigner() { throw new Error('must not sign'); } }
+  });
+  await assert.rejects(() => service.submit({
+    tenantId: '42', credentialId: 'cred-1', idempotencyKey: 'tenant-withdrawal-key-001',
+    fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1',
+    approvalReference: 'partner-approval-001'
+  }), (error) => error.code === 'WITHDRAWAL_NOT_AUTHORIZED');
+  assert.equal(policyCalls, 1);
+  assert.equal(db.calls.some(({ query }) => query.includes('INSERT INTO api_idempotency_keys')), false);
+});
+
+test('tenant withdrawal fails closed when no trusted policy provider is configured', async () => {
+  const db = walletDb();
+  const service = createTenantWithdrawalService({
+    db, network: 'devnet', commitment: 'confirmed', cipher: {},
+    rpc: { async estimateTransfer() { return {}; }, async sendSolWithSigner() { throw new Error('must not sign'); } }
+  });
+  await assert.rejects(() => service.submit({
+    tenantId: '42', credentialId: 'cred-1', idempotencyKey: 'tenant-withdrawal-key-001',
+    fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1',
+    approvalReference: 'partner-approval-001'
+  }), (error) => error.code === 'WITHDRAWAL_POLICY_UNAVAILABLE' && error.statusCode === 503);
+  assert.equal(db.calls.some(({ query }) => query.includes('INSERT INTO api_idempotency_keys')), false);
+});
 test('tenant withdrawal estimate resolves both child and parent within the authenticated tenant', async () => {
   const db = walletDb();
   let rpcCalls = 0;
