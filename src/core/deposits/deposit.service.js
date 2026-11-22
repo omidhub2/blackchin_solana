@@ -104,9 +104,24 @@ export function createDepositService({ db, rpc, network, commitment }) {
     const totalLamports = transfers.reduce((sum, item) => sum + BigInt(item.lamports), 0n);
     const status = await getStatus(signature);
 
+    if (status?.err) {
+      return {
+        wallet,
+        found: true,
+        confirmed: false,
+        confirmationStatus: status.confirmationStatus ?? null,
+        confirmations: Number.isSafeInteger(status.confirmations) ? status.confirmations : null,
+        transfers: [],
+        totalLamports: '0',
+        slot: parsed.slot ?? null,
+        blockTime: parsed.blockTime ?? null,
+        failureReason: 'Transaction failed according to signature status',
+        status: 'rejected'
+      };
+    }
+
     const confirmed = Boolean(
       status &&
-      !status.err &&
       (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')
     );
 
@@ -115,6 +130,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
       found: true,
       confirmed,
       confirmationStatus: status?.confirmationStatus ?? null,
+      confirmations: Number.isSafeInteger(status?.confirmations) ? status.confirmations : null,
       transfers,
       totalLamports: totalLamports.toString(),
       slot: parsed.slot ?? null,
@@ -373,15 +389,19 @@ export function createDepositService({ db, rpc, network, commitment }) {
       }
 
       const view = await inspect(signature, publicKey);
-      const nextStatus = view.status === 'rejected'
-        ? 'rejected'
-        : view.status === 'credited'
-          ? 'credited'
-          : view.status === 'confirmed'
-            ? 'confirmed'
-            : existing.status;
+      const previouslyConfirmed = ['confirmed', 'credited'].includes(existing.status);
+      const chainContradiction = !view.found || view.status === 'rejected';
+      const nextStatus = chainContradiction && previouslyConfirmed
+        ? 'under_review'
+        : view.status === 'rejected'
+          ? 'rejected'
+          : view.status === 'credited'
+            ? 'credited'
+            : view.status === 'confirmed'
+              ? 'confirmed'
+              : existing.status;
 
-      if (nextStatus === existing.status) {
+      if (nextStatus === existing.status && !view.failureReason) {
         return existing;
       }
 
@@ -390,7 +410,14 @@ export function createDepositService({ db, rpc, network, commitment }) {
         commitment,
         slot: view.slot,
         blockTime: view.blockTime,
-        failureReason: view.failureReason
+        failureReason: chainContradiction
+          ? (view.failureReason ?? 'Previously confirmed transaction is no longer verifiable; manual review required')
+          : null,
+        metadata: {
+          chainVerification: view.found ? 'present' : 'not_found',
+          confirmationStatus: view.confirmationStatus ?? null,
+          confirmations: view.confirmations ?? null
+        }
       });
     }
   });
