@@ -12,6 +12,7 @@ import { createHdWalletService } from './hd-wallet/hd-wallet.service.js';
 import { createChildWalletService } from './wallets/child-wallet.service.js';
 import { createBalanceService } from './balance/hd-balance.service.js';
 import { createDepositService } from './deposits/deposit.service.js';
+import { createDepositReconciliationService } from './deposits/deposit-reconciliation.service.js';
 import { createWithdrawalService } from './withdrawals/withdrawal.service.js';
 import { createTransactionService } from './transactions/transaction-history.service.js';
 import { standaloneWalletService } from './wallet/standalone-wallet.service.js';
@@ -42,6 +43,13 @@ export function createServices(overrides = {}) {
   const childWalletService = createChildWalletService(deps);
 
   const depositService = createDepositService(deps);
+  const depositReconciliation = createDepositReconciliationService({
+    db: deps.db,
+    deposits: depositService,
+    network: deps.network,
+    batchSize: deps.reconciliationBatchSize ?? 100,
+    log: deps.log ?? (() => {})
+  });
 
   const scanner = createDepositScanner({
     db: deps.db,
@@ -64,6 +72,7 @@ export function createServices(overrides = {}) {
     withdrawals: createWithdrawalService(deps),
     transactions: createTransactionService(deps),
     standaloneWallets: standaloneWalletService,
-    depositScanner: scanner
+    depositScanner: scanner,
+    depositReconciliation
   });
 }
