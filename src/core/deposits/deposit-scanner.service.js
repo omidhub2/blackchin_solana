@@ -275,11 +275,11 @@ export function createDepositScanner({
               metrics.signaturesScanned += 1;
 
               await assertOwnership();
-              const known = await deposits.isRecorded(entry.signature, wallet.publicKey);
+              const known = await deposits.isRecorded(entry.signature, wallet.publicKey, wallet.tenantId ?? null);
 
               if (known) {
                 await assertOwnership();
-                await deposits.refreshDeposit(entry.signature, wallet.publicKey);
+                await deposits.refreshDeposit(entry.signature, wallet.publicKey, wallet.tenantId ?? null);
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
                 continue;
@@ -326,6 +326,7 @@ export function createDepositScanner({
               const recorded = await deposits.recordVerifiedDeposit({
                 signature: entry.signature,
                 publicKey: wallet.publicKey,
+                tenantId: wallet.tenantId ?? null,
                 hdWalletId: wallet.hdWalletId,
                 from: transfers[0].from,
                 lamports: total.toString(),
