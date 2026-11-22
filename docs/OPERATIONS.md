@@ -23,6 +23,8 @@ Copy `.env.example` to `.env` and fill it in. Required variables:
 | `SOLANA_WS_URL` | no | `wss://`; derived from the RPC URL when omitted |
 | `ENCRYPTION_KEY_V<n>` | no | key rotation (see `SECURITY.md`) |
 | `API_HOST` / `API_PORT` | no | `127.0.0.1` / `3000` |
+| `DEPOSIT_RECONCILIATION_ENABLED` | no | `false`; set `true` to run periodic deposit chain checks |
+| `DEPOSIT_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |
 
 The API refuses to start if `API_ACCESS_KEY` is missing/short or
 `ENCRYPTION_KEY` is not 64 hex characters.
@@ -48,7 +50,7 @@ applied migration; add the next number.
 
 The API also fails fast at startup if the schema is missing (it probes
 `api_idempotency_keys`, `hd_wallets`, `wallet_accounts`,
-`blockchain_transactions`).
+`blockchain_transactions`, `deposit_reconciliation_cursors`).
 
 ## 4. Start the API
 
@@ -118,7 +120,34 @@ have happened but completion was not recorded. Check the stored
 
 Never delete the row: it is the only guard against a duplicate send.
 
-## 9. Troubleshooting
+
+## 9. Deposit reconciliation
+
+Migration `0007_deposit_reconciliation.sql` creates a durable keyset cursor and
+append-only verification events. After applying migrations, enable the worker
+with:
+
+```dotenv
+DEPOSIT_RECONCILIATION_ENABLED=true
+DEPOSIT_RECONCILIATION_INTERVAL_MS=60000
+```
+
+The worker checks recorded deposits in bounded batches, re-fetches transaction
+evidence from the configured Solana RPC, records `consistent`,
+`under_review`, `recovered`, or `rpc_error` events, and resumes after
+restarts. A PostgreSQL advisory lock prevents two instances from reconciling
+the same network concurrently. RPC failures trigger worker backoff and do not
+advance the cursor past the unverifiable transaction.
+
+This worker does **not** credit, debit, or otherwise mutate wallet balances.
+A transaction moved to `under_review` requires operator investigation. The
+current service exposes on-chain wallet balances and has no customer-owned
+internal accounting ledger, so there is no safe internal balance compensation
+to perform yet. Never correct balances by editing wallet or transaction rows.
+
+The readiness endpoint includes the reconciliation worker state when enabled.
+
+## 10. Troubleshooting
 
 | Symptom | Likely cause / action |
 |---|---|
@@ -131,7 +160,7 @@ Never delete the row: it is the only guard against a duplicate send.
 | `502 RPC_ERROR` | RPC/network failure; retry after checking provider status |
 | `MIGRATION_DRIFT` | an applied migration file was edited; restore the original file |
 
-## 10. Tests
+## 11. Tests
 
 ```bash
 npm run test:unit       # crypto, services, ledger, API (no DB, no network)
