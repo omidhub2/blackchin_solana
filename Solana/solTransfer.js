@@ -13,7 +13,23 @@ import {
 
 const LAMPORTS_PER_SOL = 1_000_000_000n;
 const MAX_SAFE_LAMPORTS = BigInt(Number.MAX_SAFE_INTEGER);
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const VALID_COMMITMENTS = new Set(['processed', 'confirmed', 'finalized']);
+
+function encodeBase58(bytes) {
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte);
+  let encoded = '';
+  while (value > 0n) {
+    encoded = BASE58_ALPHABET[Number(value % 58n)] + encoded;
+    value /= 58n;
+  }
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    encoded = `1${encoded}`;
+  }
+  return encoded || '1';
+}
 
 function parsePublicKey(value, fieldName = 'publicKey') {
   if (typeof value !== 'string' || value.length === 0) {
@@ -683,6 +699,7 @@ export async function sendSolWithSigner({
   toPublicKey,
   amountSol,
   getKeypair,
+  onSigned,
   commitment: requestedCommitment = defaultCommitment
 }) {
   if (typeof getKeypair !== 'function') {
@@ -741,12 +758,31 @@ export async function sendSolWithSigner({
 
   transaction.sign(senderKeypair);
 
+  if (typeof onSigned === 'function') {
+    if (!transaction.signature || transaction.signature.length !== 64) {
+      throw new Error('Unable to derive the signed transaction signature');
+    }
+    await onSigned({
+      signature: encodeBase58(transaction.signature),
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+    });
+  }
+
   const rawTransaction = transaction.serialize();
-  const signature = await connection.sendRawTransaction(rawTransaction, {
+  let signature;
+  try {
+    signature = await connection.sendRawTransaction(rawTransaction, {
     skipPreflight: false,
     preflightCommitment: commitmentLevel,
-    maxRetries: 3
-  });
+      maxRetries: 3
+    });
+  } catch (error) {
+    error.signature = transaction.signature
+      ? encodeBase58(transaction.signature)
+      : undefined;
+    throw error;
+  }
 
   let confirmation;
 
