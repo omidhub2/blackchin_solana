@@ -103,7 +103,8 @@ function buildWithdrawalHarness() {
       status: 'processing',
       response_json: null,
       wallet_public_key: walletPublicKey,
-      operation: 'withdrawal'
+      operation: 'withdrawal',
+      transaction_signature: null
     });
 
     return { rows: [{ idempotency_key: key }], rowCount: 1 };
@@ -112,6 +113,15 @@ function buildWithdrawalHarness() {
   pool.onQuery('FROM api_idempotency_keys', (params) => {
     const row = idempotency.get(params[0]);
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+  });
+
+  pool.onQuery('SET transaction_signature = $2', (params) => {
+    const row = idempotency.get(params[0]);
+    if (!row || row.status !== 'processing' || row.transaction_signature !== null) {
+      return { rows: [], rowCount: 0 };
+    }
+    row.transaction_signature = params[1];
+    return { rows: [], rowCount: 1 };
   });
 
   pool.onQuery("SET status = 'failed'", (params) => {
@@ -176,6 +186,7 @@ function buildWithdrawalHarness() {
     },
     async sendSolWithSigner(input) {
       rpcCalls.push(['send', input]);
+      await input.onSigned?.({ signature: SENT_SIGNATURE });
 
       return {
         sent: true,
@@ -239,6 +250,7 @@ test('withdrawal signs with the HD child key and records the ledger row', async 
   assert.equal(h.transactions[0].amountLamports, '100000');
   assert.equal(h.transactions[0].idempotencyKey, KEY);
   assert.equal(h.idempotency.get(KEY).status, 'completed');
+  assert.equal(h.idempotency.get(KEY).transaction_signature, SENT_SIGNATURE);
 });
 
 test('a repeated idempotency key replays the stored response without re-sending', async () => {
@@ -301,6 +313,52 @@ test('unapproved or badly keyed withdrawals never reach the signer', async () =>
   );
 
   assert.equal(h.rpcCalls.length, 0);
+});
+
+test('a broadcast or confirmation error after signing keeps the reservation locked with its signature', async () => {
+  const h = buildWithdrawalHarness();
+  h.service = createWithdrawalService({
+    db: h.pool,
+    cipher,
+    rpc: {
+      async estimateTransfer() { return {}; },
+      async sendSolWithSigner(input) {
+        await input.onSigned({ signature: SENT_SIGNATURE });
+        const error = new Error('RPC confirmation timeout');
+        error.signature = SENT_SIGNATURE;
+        throw error;
+      }
+    },
+    network: 'devnet',
+    commitment: 'confirmed'
+  });
+
+  await assert.rejects(
+    () => h.service.submit({
+      idempotencyKey: KEY,
+      fromPublicKey: h.account.public_key,
+      toPublicKey: DESTINATION,
+      amountSol: '0.1',
+      approved: true
+    }),
+    (error) => error.code === 'WITHDRAWAL_RECONCILIATION_REQUIRED'
+      && error.signature === SENT_SIGNATURE
+  );
+
+  assert.equal(h.idempotency.get(KEY).status, 'processing');
+  assert.equal(h.idempotency.get(KEY).transaction_signature, SENT_SIGNATURE);
+  assert.equal(h.transactions.length, 0);
+
+  await assert.rejects(
+    () => h.service.submit({
+      idempotencyKey: KEY,
+      fromPublicKey: h.account.public_key,
+      toPublicKey: DESTINATION,
+      amountSol: '0.1',
+      approved: true
+    }),
+    (error) => error.code === 'IDEMPOTENCY_IN_PROGRESS'
+  );
 });
 
 test('a signing failure marks the reservation failed and allows no replay', async () => {
