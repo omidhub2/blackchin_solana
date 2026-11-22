@@ -93,10 +93,11 @@ export function createDepositReconciliationService({
           log('deposit_reconciliation.transaction_failed', {
             transactionId: transaction.id, code: error.code ?? 'UNKNOWN'
           });
-          break; // Do not advance past an item that could not be verified.
+          throw error; // Worker backoff applies; do not advance past an unverifiable item.
         }
       }
 
+      metrics.lastError = null;
       return summary;
     }
   });
