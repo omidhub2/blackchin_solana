@@ -19,6 +19,21 @@ BEGIN
 END;
 $$;
 
+ALTER TABLE api_idempotency_keys
+  ADD COLUMN IF NOT EXISTS tenant_credential_id BIGINT,
+  ADD COLUMN IF NOT EXISTS approval_reference VARCHAR(128);
+
+DO $
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_api_idempotency_tenant_credential') THEN
+    ALTER TABLE api_idempotency_keys
+      ADD CONSTRAINT fk_api_idempotency_tenant_credential
+      FOREIGN KEY (tenant_id, tenant_credential_id)
+      REFERENCES tenant_api_credentials(tenant_id, id)
+      ON DELETE RESTRICT;
+  END IF;
+END;
+$;
 -- Keep one globally unique namespace for legacy/unassigned records.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_api_idempotency_legacy_key
   ON api_idempotency_keys(idempotency_key)
