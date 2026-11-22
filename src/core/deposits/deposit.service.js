@@ -15,6 +15,7 @@ import {
   findTransactionBySignatureForTenant,
   listDepositsBySignatureForTenant,
   listDepositsForTenant,
+  getDepositMonitoringForTenant,
   insertBlockchainTransaction,
   updateTransactionStatus,
   updateTransactionStatusForTenant
@@ -411,6 +412,10 @@ export function createDepositService({ db, rpc, network, commitment }) {
       }
 
       return { deposit: inserted.transaction, created: true, status: recordedStatus };
+    },
+
+    async getMonitoringForTenant(tenantId) {
+      return getDepositMonitoringForTenant(db, tenantId);
     },
 
     async listForTenant(tenantId, { limit = 20, offset = 0 } = {}) {
