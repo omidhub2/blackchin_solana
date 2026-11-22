@@ -236,7 +236,7 @@ test('previously credited deposits enter review when missing from chain and reco
   chainStatus = 'confirmed';
   const regressed = await service.refreshDeposit(signature, destination);
   assert.equal(regressed.status, 'under_review');
-  assert.match(regressed.failureReason, /no longer verifiable/i);
+  assert.match(regressed.failureReason, /finality regressed/i);
 
   chainStatus = 'finalized';
   const finalizedAgain = await service.refreshDeposit(signature, destination);
