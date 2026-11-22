@@ -1,7 +1,20 @@
-import { pool } from '../../../PostgreSQL/walletStorage.js';
+/**
+ * Legacy standalone wallet metadata repository.
+ *
+ * Prefer the injected query executor so services and tests do not depend on a
+ * module-global PostgreSQL pool. The one-argument form remains for legacy
+ * callers and loads the default pool lazily.
+ */
+export async function findWalletMetadataByPublicKey(dbOrPublicKey, maybePublicKey) {
+  let db = dbOrPublicKey;
+  let publicKey = maybePublicKey;
 
-export async function findWalletMetadataByPublicKey(publicKey) {
-  const result = await pool.query(
+  if (maybePublicKey === undefined) {
+    publicKey = dbOrPublicKey;
+    ({ pool: db } = await import('../../../PostgreSQL/walletStorage.js'));
+  }
+
+  const result = await db.query(
     `
       SELECT id, public_key, created_at
       FROM wallets
