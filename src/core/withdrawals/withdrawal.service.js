@@ -181,6 +181,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       }
 
       let sent;
+      let signaturePersisted = false;
 
       try {
         sent = await withSigningKey(db, fromPublicKey, async ({ keypair }) =>
@@ -189,11 +190,32 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
             toPublicKey,
             amountSol,
             getKeypair: () => keypair,
-            commitment
+            commitment,
+            onSigned: async ({ signature }) => {
+              const persisted = await db.query(
+                `
+                  UPDATE api_idempotency_keys
+                  SET transaction_signature = $2, updated_at = NOW()
+                  WHERE idempotency_key = $1
+                    AND status = 'processing'
+                    AND transaction_signature IS NULL
+                `,
+                [idempotencyKey, signature]
+              );
+              if (persisted.rowCount !== 1) {
+                throw new Error('Unable to persist signed withdrawal signature; transaction was not broadcast');
+              }
+              signaturePersisted = true;
+            }
           }), { cipher, deploymentNetwork: network }
         );
       } catch (error) {
-        await failReservation(idempotencyKey);
+        if (!signaturePersisted) {
+          await failReservation(idempotencyKey);
+        } else {
+          error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+          error.message = `Withdrawal signature was persisted, but broadcast or confirmation did not complete. Do not retry with a new idempotency key. Reconcile signature ${error.signature ?? 'stored on the idempotency record'}: ${error.message}`;
+        }
         throw error;
       }
 
