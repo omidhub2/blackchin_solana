@@ -93,12 +93,13 @@ export function createDepositScanner({
     lastError: null
   };
 
-  async function fetchPage(address, { after, limit }) {
+  async function fetchPage(address, { after, before, limit }) {
     try {
       const options = { limit };
 
       // `until` resumes strictly after the last fully processed signature.
       if (after) options.until = after;
+      if (before) options.before = before;
 
       return await rpc.getRecentSignatures(address, options);
     } catch (error) {
@@ -193,12 +194,14 @@ export function createDepositScanner({
 
           activeCursorId = cursor.id;
           await cursors.markCursorRunning(db, cursor.id, new Date());
-          let lastHandled = null;
+          let newestHandled = null;
+          let before = null;
           const pages = Math.max(1, Math.ceil(maxBatch / pageSize));
 
           for (let page = 0; page < pages; page += 1) {
             const signatures = await fetchPage(wallet.publicKey, {
               after: cursor.lastSignature,
+              before,
               limit: pageSize
             });
 
@@ -213,7 +216,7 @@ export function createDepositScanner({
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
-                lastHandled = entry;
+                newestHandled ??= entry;
                 continue;
               }
 
@@ -222,27 +225,27 @@ export function createDepositScanner({
               if (!parsed) {
                 log('scanner.transaction_not_available', { signature: entry.signature });
                 stopReason = 'transaction_unavailable';
-                break scan;
+                break;
               }
 
               if (parsed.meta?.err) {
                 summary.failed += 1;
                 metrics.failedTransactions += 1;
-                lastHandled = entry;
+                newestHandled ??= entry;
                 continue;
               }
 
               const transfers = rpc.extractIncomingTransfers(parsed, wallet.publicKey) ?? [];
 
               if (transfers.length === 0) {
-                lastHandled = entry;
+                newestHandled ??= entry;
                 continue;
               }
 
               const total = transfers.reduce((sum, item) => sum + BigInt(item.lamports), 0n);
 
               if (total <= 0n) {
-                lastHandled = entry;
+                newestHandled ??= entry;
                 continue;
               }
 
@@ -271,37 +274,44 @@ export function createDepositScanner({
                 await deposits.refreshDeposit(entry.signature, wallet.publicKey);
               }
 
-              lastHandled = entry;
+              newestHandled ??= entry;
             }
 
+            if (stopReason) break;
             if (signatures.length < pageSize) break;
+            before = signatures.at(-1)?.signature ?? null;
           }
 
-          if (lastHandled) {
-            const advanced = await cursors.advanceCursor(db, cursor.id, {
-              lastSignature: lastHandled.signature,
-              lastSlot: lastHandled.slot ?? null,
-              lastBlockTime: lastHandled.blockTime
-                ? new Date(lastHandled.blockTime * 1000)
-                : null
-            });
-
-            summary.cursors.push({
-              address: wallet.publicKey,
-              lastSignature: advanced.lastSignature,
-              lastSlot: advanced.lastSlot
-            });
-          } else {
+          if (stopReason) {
+            await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
             summary.cursors.push({
               address: wallet.publicKey,
               lastSignature: cursor.lastSignature,
               lastSlot: cursor.lastSlot
             });
+            break;
           }
 
-          if (stopReason) {
-            await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
-          }
+          // RPC returns newest-to-oldest. The cursor is the newest signature
+          // in the fully processed window, not the oldest page item.
+          const position = newestHandled ?? {
+            signature: cursor.lastSignature,
+            slot: cursor.lastSlot,
+            blockTime: cursor.lastBlockTime
+          };
+          const advanced = await cursors.advanceCursor(db, cursor.id, {
+            lastSignature: position.signature,
+            lastSlot: position.slot ?? null,
+            lastBlockTime: position.blockTime
+              ? new Date(position.blockTime * 1000)
+              : null
+          });
+
+          summary.cursors.push({
+            address: wallet.publicKey,
+            lastSignature: advanced.lastSignature,
+            lastSlot: advanced.lastSlot
+          });
         }
         return stopReason ? { ...summary, stopped: stopReason } : summary;
       } catch (error) {
