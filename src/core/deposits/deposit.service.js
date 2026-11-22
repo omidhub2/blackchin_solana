@@ -172,6 +172,8 @@ export function createDepositService({ db, rpc, network, commitment }) {
       lamports,
       transfers = [],
       commitment: entryCommitment = null,
+      confirmations = null,
+      confirmationStatus = null,
       status,
       slot = null,
       blockTime = null,
@@ -189,8 +191,49 @@ export function createDepositService({ db, rpc, network, commitment }) {
         throw conflict('A positive integer lamport amount is required', 'INVALID_AMOUNT');
       }
 
-      if (!TRANSACTION_STATUSES.includes(status)) {
-        throw conflict('Unsupported deposit status', 'INVALID_STATUS');
+      if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(signature)) {
+        throw conflict('A valid Solana transaction signature is required', 'INVALID_SIGNATURE');
+      }
+
+      if (!['confirming', 'confirmed', 'credited'].includes(status)) {
+        throw conflict('Only successful, non-failed deposits can be recorded', 'INVALID_STATUS');
+      }
+
+      if (confirmations !== null && (!Number.isSafeInteger(confirmations) || confirmations < 0)) {
+        throw conflict('Confirmations must be a non-negative integer or null', 'INVALID_CONFIRMATIONS');
+      }
+
+      if (!Array.isArray(transfers) || transfers.length === 0) {
+        throw conflict('At least one verified incoming transfer is required', 'NO_MATCHING_TRANSFER');
+      }
+
+      let verifiedTotal = 0n;
+      for (const transfer of transfers) {
+        if (
+          !transfer ||
+          transfer.to !== publicKey ||
+          typeof transfer.from !== 'string' ||
+          !/^\\d+$/.test(String(transfer.lamports)) ||
+          BigInt(transfer.lamports) <= 0n
+        ) {
+          throw conflict('Incoming transfer details do not match the destination wallet', 'INVALID_TRANSFER');
+        }
+        verifiedTotal += BigInt(transfer.lamports);
+      }
+
+      if (verifiedTotal !== BigInt(lamports)) {
+        throw conflict('Deposit amount does not match the verified transfer total', 'AMOUNT_MISMATCH');
+      }
+
+      const wallet = await resolveWallet(db, publicKey);
+      if (!wallet) {
+        throw notFound('Wallet address was not found in the local wallet database', 'WALLET_NOT_FOUND');
+      }
+      if (wallet.network && wallet.network !== network) {
+        throw conflict('Wallet network does not match the deposit service network', 'NETWORK_MISMATCH');
+      }
+      if (wallet.hdWalletId && hdWalletId && String(wallet.hdWalletId) !== String(hdWalletId)) {
+        throw conflict('HD wallet ownership does not match the destination wallet', 'WALLET_OWNERSHIP_MISMATCH');
       }
 
       return insertBlockchainTransaction(db, {
@@ -208,6 +251,8 @@ export function createDepositService({ db, rpc, network, commitment }) {
         metadata: {
           transfers,
           fingerprint,
+          confirmations,
+          confirmationStatus,
           source: 'deposit-scanner',
           walletType: hdWalletId ? 'hd_child' : 'standalone'
         }
