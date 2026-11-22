@@ -346,7 +346,7 @@ export function createDepositScanner({
               } else {
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
-                await deposits.refreshDeposit(entry.signature, wallet.publicKey);
+                await deposits.refreshDeposit(entry.signature, wallet.publicKey, wallet.tenantId ?? null);
               }
             }
 
