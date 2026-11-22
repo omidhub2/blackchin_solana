@@ -23,6 +23,19 @@ import {
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 
+function parseAmountLamports(amountSol) {
+  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(amountSol)) {
+    throw badRequest('amountSol must be a positive decimal string with at most 9 decimal places', 'INVALID_AMOUNT');
+  }
+  const [whole, fraction = ''] = amountSol.split('.');
+  const lamports = BigInt(whole) * 1_000_000_000n +
+    BigInt((fraction + '000000000').slice(0, 9));
+  if (lamports <= 0n || lamports > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw badRequest('amountSol is outside the supported transfer range', 'INVALID_AMOUNT');
+  }
+  return lamports.toString();
+}
+
 function hashRequest({ fromPublicKey, toPublicKey, amountSol }) {
   return crypto
     .createHash('sha256')
@@ -31,16 +44,16 @@ function hashRequest({ fromPublicKey, toPublicKey, amountSol }) {
 }
 
 export function createWithdrawalService({ db, rpc, network, commitment, cipher }) {
-  async function reserve({ idempotencyKey, requestHash, walletPublicKey, network }) {
+  async function reserve({ idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports }) {
     const reservation = await db.query(
       `
         INSERT INTO api_idempotency_keys
-          (idempotency_key, request_hash, status, wallet_public_key, operation, network)
-        VALUES ($1, $2, 'processing', $3, 'withdrawal', $4)
+          (idempotency_key, request_hash, status, wallet_public_key, operation, network, to_public_key, amount_lamports)
+        VALUES ($1, $2, 'processing', $3, 'withdrawal', $4, $5, $6)
         ON CONFLICT (idempotency_key) DO NOTHING
         RETURNING idempotency_key
       `,
-      [idempotencyKey, requestHash, walletPublicKey, network]
+      [idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
     );
 
     if (reservation.rowCount !== 0) {
@@ -49,7 +62,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
 
     const existingResult = await db.query(
       `
-        SELECT request_hash, status, response_json, wallet_public_key, operation, network
+        SELECT request_hash, status, response_json, wallet_public_key, operation, network, to_public_key, amount_lamports
         FROM api_idempotency_keys
         WHERE idempotency_key = $1
         LIMIT 1
@@ -173,11 +186,14 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       }
 
       const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol });
+      const amountLamports = parseAmountLamports(amountSol);
       const reservation = await reserve({
         idempotencyKey,
         requestHash,
         walletPublicKey: fromPublicKey,
-        network
+        network,
+        toPublicKey,
+        amountLamports
       });
 
       if (!reservation.reserved) {
