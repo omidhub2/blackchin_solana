@@ -133,7 +133,7 @@ export function createTenantWithdrawalService({ db, rpc, network, commitment, ci
     async submit(input) {
       const tenantId = assertTenantId(input?.tenantId);
       const credentialId = assertTenantId(input?.credentialId);
-      const { idempotencyKey, fromPublicKey, toPublicKey, amountSol, approvalReference, credentialId } = input ?? {};
+      const { idempotencyKey, fromPublicKey, toPublicKey, amountSol, approvalReference } = input ?? {};
       if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
         throw badRequest('A valid Idempotency-Key header is required', 'INVALID_IDEMPOTENCY_KEY');
       }
