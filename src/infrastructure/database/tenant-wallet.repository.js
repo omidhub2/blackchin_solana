@@ -5,6 +5,7 @@
  * legacy rows whose tenant_id is NULL.
  */
 import { mapWalletAccount, ACCOUNT_STATUSES } from './wallet-account.repository.js';
+import { deriveAccountPath } from '../../blockchain/solana/hd/derivation.js';
 
 function assertTenantId(tenantId) {
   if (
@@ -289,7 +290,7 @@ export async function insertWalletAccountsForTenant(db, tenantId, accounts) {
       error.code = 'MIXED_HD_WALLETS';
       throw error;
     }
-    const expectedPath = `m/44'/501'/${account.accountIndex}'/0'`;
+    const expectedPath = deriveAccountPath(account.accountIndex);
     if (account.derivationPath !== expectedPath) {
       const error = new Error('Account derivation path does not match its index');
       error.statusCode = 400;
