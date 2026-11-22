@@ -180,13 +180,21 @@ Recorded ledger rows for that wallet.
 
 Tenant routes use `X-API-Key` and scopes. The tenant ID is taken only from the authenticated credential, never from the request body.
 
+### `GET /api/v1/tenant/withdrawals?limit=&offset=`
+
+Scope: `withdrawals:read`. Returns tenant-only withdrawal intent/history records, including `processing` intents awaiting reconciliation. `limit` 1–100 (default 20); `offset` defaults to 0.
+
+### `GET /api/v1/tenant/withdrawals/:idempotencyKey`
+
+Scope: `withdrawals:read`. Returns one tenant-owned withdrawal intent and its current status; a key owned by another tenant is indistinguishable from a missing key.
+
 ### `POST /api/v1/tenant/withdrawals/estimate`
 
 Scope: `withdrawals:estimate`. Body: `{ "fromPublicKey", "toPublicKey", "amountSol" }`. Only active HD child wallets owned by the authenticated tenant are eligible. Returns a read-only fee/balance estimate; never signs or broadcasts.
 
 ### `POST /api/v1/tenant/withdrawals`
 
-Scope: `withdrawals:write`. Requires an `Idempotency-Key` header and body `{ "fromPublicKey", "toPublicKey", "amountSol", "approvalReference" }`. The approval reference must be verified by the configured tenant withdrawal policy. The service fails closed with `503 WITHDRAWAL_POLICY_UNAVAILABLE` when no policy provider is configured, and rejects denied approvals before reserving an idempotency key or signing.
+Scope: `withdrawals:write`. Requires an `Idempotency-Key` header and body `{ "fromPublicKey", "toPublicKey", "amountSol", "approvalReference" }`. The approval reference must be verified by the configured tenant withdrawal policy. Submit is rate-limited to 10/min and estimate to 30/min per client IP. The service fails closed with `503 WITHDRAWAL_POLICY_UNAVAILABLE` when no policy provider is configured, and rejects denied approvals before reserving an idempotency key or signing.
 
 Tenant idempotency keys are unique per tenant; legacy `tenant_id IS NULL` keys retain their separate globally unique namespace. Signed transaction signatures are persisted before broadcast. Ambiguous outcomes remain processing for reconciliation and are never blindly rebroadcast. The tenant ledger insert and idempotency completion are committed atomically.
 
