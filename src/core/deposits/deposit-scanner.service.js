@@ -124,12 +124,32 @@ export function createDepositScanner({
       const statuses = await rpc.getSignatureStatuses([signature]);
       const status = statuses?.value?.[0] ?? null;
 
-      if (status?.confirmationStatus === 'finalized') {
-        return { status: 'credited', commitment: 'finalized' };
+      if (status?.err) {
+        return {
+          status: 'rejected',
+          commitment: status.confirmationStatus ?? 'processed',
+          confirmations: Number.isSafeInteger(status.confirmations) ? status.confirmations : null,
+          failureReason: 'Transaction failed according to signature status'
+        };
       }
 
+      const confirmations = Number.isSafeInteger(status?.confirmations)
+        ? status.confirmations
+        : null;
+
+      if (status?.confirmationStatus === 'finalized') {
+        return { status: 'credited', commitment: 'finalized', confirmations };
+      }
+
+      // A confirmed commitment is the cluster's supermajority vote. For
+      // transactions still reported as processed, enforce the configured
+      // number of observed confirmations before advancing to confirmed.
       if (status?.confirmationStatus === 'confirmed') {
-        return { status: 'confirmed', commitment: 'confirmed' };
+        return { status: 'confirmed', commitment: 'confirmed', confirmations };
+      }
+
+      if (confirmations !== null && confirmations >= confirmationsRequired) {
+        return { status: 'confirmed', commitment: 'confirmed', confirmations };
       }
     } catch (error) {
       // The status endpoint is advisory; the parsed transaction already proves
@@ -137,7 +157,7 @@ export function createDepositScanner({
       log('scanner.confirmation_status_failed', { signature, message: error.message });
     }
 
-    return { status: 'confirming', commitment: 'processed' };
+    return { status: 'confirming', commitment: 'processed', confirmations: null };
   }
 
   return Object.freeze({
@@ -274,6 +294,16 @@ export function createDepositScanner({
               }
 
               const state = await confirmationState(entry.signature);
+              if (state.status === 'rejected') {
+                summary.failed += 1;
+                metrics.failedTransactions += 1;
+                log('scanner.transaction_status_failed', {
+                  signature: entry.signature,
+                  failureReason: state.failureReason
+                });
+                continue;
+              }
+
               const recorded = await deposits.recordVerifiedDeposit({
                 signature: entry.signature,
                 publicKey: wallet.publicKey,
@@ -283,6 +313,8 @@ export function createDepositScanner({
                 transfers,
                 commitment: state.commitment,
                 status: state.status,
+                confirmations: state.confirmations,
+                confirmationStatus: state.commitment,
                 slot: parsed.slot ?? entry.slot ?? null,
                 blockTime: parsed.blockTime ? new Date(parsed.blockTime * 1000) : null,
                 fingerprint: transferFingerprint(entry.signature, wallet.publicKey, transfers[0])
