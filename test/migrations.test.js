@@ -164,6 +164,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
 
   assert.ok(versions.includes('0004'));
   assert.ok(versions.includes('0005'));
+  assert.ok(versions.includes('0006'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
