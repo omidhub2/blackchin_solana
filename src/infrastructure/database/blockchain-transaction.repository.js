@@ -293,3 +293,23 @@ export async function listDepositsForTenant(db, tenantId, { limit = 20, offset =
   return result.rows.map(mapBlockchainTransaction);
 }
 
+
+/** Tenant-only deposit monitoring aggregates. */
+export async function getDepositMonitoringForTenant(db, tenantId) {
+  const tenant = assertTenantId(tenantId);
+  const result = await db.query(
+    `SELECT network, status, COUNT(*)::text AS count,
+            MAX(updated_at) AS last_activity_at
+     FROM blockchain_transactions
+     WHERE tenant_id = $1 AND direction = 'deposit'
+     GROUP BY network, status
+     ORDER BY network ASC, status ASC`,
+    [tenant]
+  );
+  return result.rows.map((row) => ({
+    network: row.network,
+    status: row.status,
+    count: Number(row.count),
+    lastActivityAt: row.last_activity_at
+  }));
+}
