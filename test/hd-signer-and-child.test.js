@@ -44,6 +44,19 @@ function buildPool(memory) {
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   });
 
+  // Legacy wallet metadata lookup used by resolveWallet().
+  pool.onQuery('FROM wallets\n      WHERE public_key = $1', (params) => {
+    const row = memory.legacyWallets?.get(params[0]);
+    return {
+      rows: row ? [{
+        id: row.id,
+        public_key: row.public_key,
+        created_at: row.created_at
+      }] : [],
+      rowCount: row ? 1 : 0
+    };
+  });
+
   // Signing-path locks (SELECT ... FOR SHARE).
   pool.onQuery('FROM wallet_accounts\n      WHERE id = $1\n      FOR SHARE', (params) => {
     const row = memory.accounts.find((item) => String(item.id) === String(params[0]));
