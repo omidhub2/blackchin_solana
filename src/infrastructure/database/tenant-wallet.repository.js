@@ -328,3 +328,16 @@ export async function insertWalletAccountsForTenant(db, tenantId, accounts) {
   );
   return result.rows.map(mapWalletAccount);
 }
+
+export async function findAccountByPathForTenant(db, tenantId, hdWalletId, derivationPath) {
+  const tenant = assertTenantId(tenantId);
+  const result = await db.query(
+    `SELECT id, hd_wallet_id, public_key, account_index, derivation_path,
+            wallet_type, network, status, created_at, updated_at
+     FROM wallet_accounts
+     WHERE tenant_id = $1 AND hd_wallet_id = $2 AND derivation_path = $3
+     LIMIT 1`,
+    [tenant, hdWalletId, derivationPath]
+  );
+  return mapWalletAccount(result.rows[0]);
+}
