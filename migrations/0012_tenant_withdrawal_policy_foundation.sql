@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS tenant_withdrawal_policies (
 CREATE TABLE IF NOT EXISTS tenant_withdrawal_destinations (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
-    network VARCHAR(32) NOT NULL CHECK (network IN ('solana-devnet', 'solana-testnet', 'solana-mainnet-beta')),
+    network VARCHAR(32) NOT NULL CHECK (network IN ('devnet', 'testnet', 'mainnet-beta')),
     asset VARCHAR(16) NOT NULL DEFAULT 'SOL' CHECK (asset = 'SOL'),
     destination_public_key VARCHAR(64) NOT NULL
         CHECK (destination_public_key ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'),
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS tenant_withdrawal_approvals (
     request_hash CHAR(64) NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
     wallet_public_key VARCHAR(64) NOT NULL,
     destination_public_key VARCHAR(64) NOT NULL,
-    network VARCHAR(32) NOT NULL CHECK (network IN ('solana-devnet', 'solana-testnet', 'solana-mainnet-beta')),
+    network VARCHAR(32) NOT NULL CHECK (network IN ('devnet', 'testnet', 'mainnet-beta')),
     asset VARCHAR(16) NOT NULL DEFAULT 'SOL' CHECK (asset = 'SOL'),
     amount_lamports NUMERIC(30, 0) NOT NULL CHECK (amount_lamports > 0),
     status VARCHAR(16) NOT NULL DEFAULT 'approved'
@@ -101,8 +101,46 @@ CREATE TABLE IF NOT EXISTS tenant_withdrawal_policy_events (
     correlation_id VARCHAR(128),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (tenant_id, credential_id)
-        REFERENCES tenant_api_credentials(tenant_id, id) ON DELETE RESTRICT
+        REFERENCES tenant_api_credentials(tenant_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant_id, idempotency_key)
+        REFERENCES api_idempotency_keys(tenant_id, idempotency_key) ON DELETE RESTRICT
 );
+
+CREATE OR REPLACE FUNCTION prevent_tenant_withdrawal_approval_rebinding()
+RETURNS TRIGGER AS $
+BEGIN
+    IF OLD.tenant_id IS DISTINCT FROM NEW.tenant_id
+       OR OLD.credential_id IS DISTINCT FROM NEW.credential_id
+       OR OLD.approval_reference IS DISTINCT FROM NEW.approval_reference
+       OR OLD.request_hash IS DISTINCT FROM NEW.request_hash
+       OR OLD.wallet_public_key IS DISTINCT FROM NEW.wallet_public_key
+       OR OLD.destination_public_key IS DISTINCT FROM NEW.destination_public_key
+       OR OLD.network IS DISTINCT FROM NEW.network
+       OR OLD.asset IS DISTINCT FROM NEW.asset
+       OR OLD.amount_lamports IS DISTINCT FROM NEW.amount_lamports
+       OR OLD.issuer IS DISTINCT FROM NEW.issuer
+       OR OLD.issuer_event_id IS DISTINCT FROM NEW.issuer_event_id
+       OR OLD.expires_at IS DISTINCT FROM NEW.expires_at
+       OR OLD.approved_at IS DISTINCT FROM NEW.approved_at THEN
+        RAISE EXCEPTION 'tenant withdrawal approval binding is immutable'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT (
+        (OLD.status = 'approved' AND NEW.status IN ('consumed', 'revoked', 'expired'))
+        OR (OLD.status = NEW.status)
+    ) THEN
+        RAISE EXCEPTION 'invalid tenant withdrawal approval state transition'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_tenant_withdrawal_approvals_binding_immutable
+    ON tenant_withdrawal_approvals;
+CREATE TRIGGER trg_tenant_withdrawal_approvals_binding_immutable
+    BEFORE UPDATE ON tenant_withdrawal_approvals
+    FOR EACH ROW EXECUTE FUNCTION prevent_tenant_withdrawal_approval_rebinding();
 
 CREATE INDEX IF NOT EXISTS idx_tenant_withdrawal_policy_events_tenant_created
     ON tenant_withdrawal_policy_events(tenant_id, created_at DESC, id DESC);
