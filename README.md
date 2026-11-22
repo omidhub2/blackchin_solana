@@ -1,148 +1,97 @@
-# Blackchin Solana Wallet Engine
+# BLACKCHIN CORE
 
-Custodial Solana wallet core with **HD (hierarchical deterministic) wallets**,
-encrypted PostgreSQL storage and a Fastify REST API.
+**Multi-tenant wallet and blockchain infrastructure for partner companies.**
 
-## What it does
+BLACKCHIN CORE provides wallet infrastructure, deposit-address generation, blockchain monitoring, transaction verification and controlled transaction execution to companies through authenticated server-to-server APIs.
 
-- **Legacy standalone wallets** — `Keypair.generate()`, stored encrypted
-  (unchanged behaviour and endpoints).
-- **HD roots** — a BIP39 (24-word) mnemonic per root, encrypted with
-  AES-256-GCM; children derived with SLIP-0010 Ed25519 at
-  `m/44'/501'/{accountIndex}'/0'`.
-- **Concurrency-safe child creation** — up to 50 accounts per request, indexes
-  allocated under a row lock with unique constraints as the final guard.
-- **Native SOL operations** for both wallet types: balance (single + aggregate),
-  deposit address, incoming transaction verification and idempotent deposit
-  recording, fee estimation, and approved withdrawals with an immutable ledger.
-- **No private keys or mnemonics in normal API responses.** The recovery phrase
-  is available exactly once through a purpose-bound one-time token.
+Partner companies own their customer relationship and internal financial accounting. BLACKCHIN operates the blockchain infrastructure and maintains the operational records required to secure, execute and reconcile blockchain activity.
 
-SPL tokens are **not** supported; only native SOL is implemented and tested.
+> **Implementation status:** the current codebase is a Solana-first implementation. Multi-tenant company authentication, tenant-isolated authorization, EVM/TRON adapters, token transfers, production key-management integration and a complete webhook delivery platform are target capabilities, not claims about the current release. See [Product Specification](docs/PRODUCT_SPECIFICATION.md) and [Architecture](docs/ARCHITECTURE.md).
 
-## Architecture
+## Responsibility boundary
+
+| Capability | BLACKCHIN CORE | Partner company |
+|---|---|---|
+| Blockchain nodes/RPC and chain adapters | Operates | Consumes API |
+| Wallet roots, derived wallets and signing | Operates | Requests provisioning |
+| Deposit addresses and chain monitoring | Operates | Assigns addresses to its users |
+| On-chain transaction verification | Operates | Receives evidence/status |
+| Withdrawal execution | Executes after authenticated company instruction and platform controls | Authenticates its customer and authorizes the business request |
+| Customer balances and customer accounting | Not the source of truth | Owns and maintains |
+| Double-entry customer ledger and customer holds | Not provided as company accounting | Owns and maintains |
+| Infrastructure asset attribution and reconciliation | Maintains | Reconciles its own books against reports |
+
+BLACKCHIN does not decide whether a partner's end customer has sufficient internal balance. The partner must authorize a withdrawal before requesting execution. BLACKCHIN independently enforces infrastructure-level security, wallet availability, policy limits and transaction safety.
+
+## Product capabilities
+
+1. Company onboarding, tenant identity, API credentials, scopes and key rotation.
+2. Tenant-isolated wallet namespaces and HD wallet provisioning.
+3. Deposit address generation and address-to-company attribution.
+4. Blockchain adapters, RPC management, transaction scanning and confirmation tracking.
+5. Deposit detection, verification, duplicate prevention and status reporting.
+6. Withdrawal request validation, policy checks, secure signing, broadcast and finality tracking.
+7. Asset and fee visibility for infrastructure wallets, with per-company operational attribution.
+8. Durable webhooks, event replay, idempotency and transaction query APIs.
+9. Audit trails, monitoring, reconciliation, emergency freeze and recovery operations.
+10. Central administration for companies, networks, assets, wallets, policies and infrastructure health.
+
+## Current implementation
+
+- Node.js 20+ (ES modules), Fastify REST API and PostgreSQL.
+- Solana native SOL wallet operations.
+- Legacy standalone wallets and BIP39/SLIP-0010 Ed25519 HD roots/child accounts.
+- AES-256-GCM encrypted secret storage, one-time recovery provisioning and idempotent withdrawal handling.
+- Deposit and withdrawal reconciliation workers with PostgreSQL advisory locks and append-only evidence events.
+- Ordered, checksum-verified PostgreSQL migrations.
+
+**Not currently implemented:** production multi-tenant authorization/isolation, EVM and TRON adapters, SPL/ERC-20/TRC-20 token operations, integrated KMS/HSM, full webhook delivery, partner-facing company administration, and a per-company operational asset attribution ledger. Do not expose the current single-credential API as a public multi-company service until the tenant-security phase is complete.
+
+## Repository layout
 
 ```
-src/api                  Fastify server, routes, API-key auth, rate limits, validation
-src/core                 use cases: hd-wallets, wallets (children), balance,
-                         deposits, withdrawals, transactions, standalone wallets
-src/blockchain/solana    adapter + hd/ (BIP39, SLIP-0010, derivation)
-src/infrastructure       PostgreSQL repositories, encryption, signer, wiring
-PostgreSQL/ Solana/      pre-existing storage and chain implementations (kept)
-config/                  Solana connection (commitment, RPC/WS endpoints)
-migrations/              ordered SQL migrations (0001-0003)
-scripts/migrate.js       versioned migration runner
+src/api/              Fastify server, routes, authentication and validation
+src/core/             Wallet, balance, deposit, withdrawal and reconciliation use cases
+src/blockchain/       Chain adapters (currently Solana)
+src/infrastructure/   PostgreSQL, encryption, signing and dependency wiring
+migrations/           Forward-only SQL migrations
+scripts/              Migration and operational scripts
+test/                 Unit, API, database and worker tests
+docs/                 Product, architecture, API, security, schema and operations
 ```
 
-Details: [`docs/HD_WALLET_ARCHITECTURE.md`](docs/HD_WALLET_ARCHITECTURE.md).
-
-## Requirements
+## Requirements and local setup
 
 - Node.js 20+
 - PostgreSQL 13+
-- A Solana RPC endpoint (devnet by default)
-
-## Install and configure
+- Solana RPC endpoint for the currently implemented chain adapter
 
 ```bash
 npm install
-cp .env.example .env      # then fill in DATABASE_URL, ENCRYPTION_KEY, API_ACCESS_KEY
-```
-
-## Migrations
-
-```bash
-npm run db:migrate:status
+cp .env.example .env
+# Configure secrets locally; never commit .env.
 npm run db:migrate
-```
-
-Migration `0003_hd_wallets.sql` is additive: existing wallets are preserved and
-are **not** converted into HD children. Back up the database first.
-
-## Run
-
-```bash
 npm run api:start
-curl http://127.0.0.1:3000/health
 ```
 
-## API at a glance
-
-Base path `/api/v1`, `X-API-Key` required on every route except `/health`.
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/hd-wallets` | create an HD root (returns one-time recovery token) |
-| GET | `/hd-wallets/:id` | root metadata |
-| PATCH | `/hd-wallets/:id` | change root status |
-| POST | `/hd-wallets/:id/recovery-phrase/consume` | one-time phrase provisioning |
-| GET | `/hd-wallets/:id/derive/:accountIndex` | deterministic address recovery check |
-| GET/POST | `/hd-wallets/:id/accounts` | list / create child wallets |
-| POST | `/hd-wallets/:id/accounts/batch` | batch child creation |
-| GET | `/hd-wallets/:id/accounts/:accountIndex` | child by derivation index |
-| GET | `/hd-wallets/:id/balance` | aggregate child balance |
-| GET | `/hd-wallets/:id/transactions` | deposits + withdrawals |
-| POST | `/wallets` | standalone wallet (legacy) |
-| GET | `/wallets/:publicKey` | wallet metadata (standalone or child) |
-| GET | `/wallets/:publicKey/balance` | single wallet balance |
-| GET | `/wallets/:publicKey/deposit-address` | deposit address |
-| GET | `/wallets/:publicKey/transactions` | live incoming SOL scan |
-| GET | `/wallets/:publicKey/deposits` `/withdrawals` | recorded ledger |
-| GET | `/transfers/:signature?publicKey=` | verify an incoming transfer |
-| POST | `/transfers/:signature/confirm` | verify + record a deposit (idempotent) |
-| GET | `/deposits/:signature?publicKey=` | refresh deposit confirmation |
-| POST | `/transfers/estimate` | fee/balance preview |
-| POST | `/transfers` | approved withdrawal (Idempotency-Key required) |
-
-Full reference: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md).
-
-### Quick start on devnet
-
-```bash
-curl -s -X POST http://127.0.0.1:3000/api/v1/hd-wallets \
-  -H "X-API-Key: $API_ACCESS_KEY" -H 'content-type: application/json' \
-  -d '{"label":"treasury"}'
-
-curl -s -X POST http://127.0.0.1:3000/api/v1/hd-wallets/1/accounts/batch \
-  -H "X-API-Key: $API_ACCESS_KEY" -H 'content-type: application/json' \
-  -d '{"count":3}'
-
-curl -s http://127.0.0.1:3000/api/v1/hd-wallets/1/balance \
-  -H "X-API-Key: $API_ACCESS_KEY"
-```
-
-## Security posture
-
-- AES-256-GCM for every stored secret, AAD-bound to the record, key-versioned
-  for rotation.
-- Withdrawals need the API key, `approved: true`, and a fresh idempotency key;
-  a crashed/uncertain broadcast is never replayed automatically.
-- Deposits are recorded once per `(signature, wallet, direction)`.
-- The API key authenticates **one trusted backend**, not end users. Do not expose
-  the service publicly without tenant authentication. See
-  [`docs/SECURITY.md`](docs/SECURITY.md).
+Health endpoint: `GET /health`.
 
 ## Documentation
 
-- [`docs/HD_WALLET_ARCHITECTURE.md`](docs/HD_WALLET_ARCHITECTURE.md) — derivation scheme, recovery, signing
-- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — endpoints and error codes
-- [`docs/SECURITY.md`](docs/SECURITY.md) — custody model, encryption, threat model
-- [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md) — tables, constraints, migrations
-- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — install, deploy, backup, reconciliation, troubleshooting
+- [Product Specification](docs/PRODUCT_SPECIFICATION.md) — definitive product scope and company/core responsibility boundary.
+- [Architecture](docs/ARCHITECTURE.md) — target system architecture, tenancy, data flow and service boundaries.
+- [API Reference](docs/API_REFERENCE.md) — currently implemented HTTP contracts and their limitations.
+- [Security](docs/SECURITY.md) — current security posture and mandatory controls before multi-tenant production.
+- [Database Schema](docs/DATABASE_SCHEMA.md) — current schema and migration history.
+- [HD Wallet Architecture](docs/HD_WALLET_ARCHITECTURE.md) — current Solana HD implementation.
+- [Operations](docs/OPERATIONS.md) — setup, deployment, backups, monitoring and recovery.
 
 ## Tests
 
 ```bash
-npm run test:unit       # no database, no blockchain
-npm run test:hd         # HD crypto + services
-npm run test:api        # HTTP contracts
-npm run test:solana
-npm run test:migrations
+npm test
 npm run check:imports
-npm run test:wallet     # requires PostgreSQL
+npm run test:migrations
 ```
 
-## Legacy CLIs
-
-`npm run wallet:create`, `npm run sol:receive`, `npm run sol:send` and
-`node PostgreSQL/show-wallet.js` still operate on standalone wallets.
+Database-backed tests require a dedicated test PostgreSQL database. Never run tests against production wallets or funded production accounts.

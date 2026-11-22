@@ -1,156 +1,113 @@
 # Database Schema
 
-Migrations are applied with `npm run db:migrate` (see `OPERATIONS.md`).
+This document describes the **current database**, not the complete target schema. Migrations are forward-only and checksum-verified with `npm run db:migrate`. Do not edit an applied migration; add the next numbered migration.
+
+## 1. Current migration inventory
 
 | Version | File | Purpose |
 |---|---|---|
-| 0001 | `0001_wallets.sql` | legacy standalone wallets (unchanged) |
-| 0002 | `0002_api_idempotency.sql` | idempotency reservations (unchanged) |
-| 0003 | `0003_hd_wallets.sql` | HD roots, child accounts, ledger, idempotency columns |
-| 0004 | `0004_hardening.sql` | recovery-token hash/expiry, scanner cursors, webhook outbox, shared rate limiting, ledger UPDATE trigger |
-| 0005 | `0005_ledger_immutability.sql` | re-installs the ledger UPDATE trigger and adds a DELETE guard |
+| 0001 | `0001_wallets.sql` | legacy standalone wallets |
+| 0002 | `0002_api_idempotency.sql` | request idempotency |
+| 0003 | `0003_hd_wallets.sql` | HD roots, child accounts and transaction/idempotency fields |
+| 0004 | `0004_hardening.sql` | recovery-token metadata, scanner cursors, webhook outbox/shared rate-limit foundations and immutability trigger |
+| 0005 | `0005_ledger_immutability.sql` | transaction update/delete guards |
 | 0006 | `0006_deposit_scanner_backfill.sql` | persistent scanner backfill progress |
-| 0007 | `0007_deposit_reconciliation.sql` | durable deposit reconciliation cursor and append-only verification events |
-| 0008 | `0008_withdrawal_reconciliation.sql` | durable withdrawal reconciliation cursor and append-only verification events |
+| 0007 | `0007_deposit_reconciliation.sql` | deposit reconciliation cursor and append-only evidence |
+| 0008 | `0008_withdrawal_reconciliation.sql` | withdrawal reconciliation cursor and append-only evidence |
 
-## `wallets` (legacy, unchanged)
+## 2. Current tables and their meaning
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `BIGSERIAL PK` | |
-| `public_key` | `TEXT NOT NULL` | unique via `idx_wallets_public_key_unique` |
-| `private_key_encrypted` / `private_key_iv` / `private_key_auth_tag` | `TEXT NOT NULL` | AES-256-GCM |
-| `mnemonic_*` | `TEXT NULL` | always `NULL` for `Keypair.generate()` wallets |
-| `created_at` | `TIMESTAMPTZ` | |
+### `wallets`
 
-## `hd_wallets`
+Legacy standalone wallets. Encrypted private key fields use AES-256-GCM. Existing records are retained and are not silently converted into HD children.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `BIGSERIAL PK` | also used as AEAD AAD |
-| `owner_id` | `TEXT NULL` | reserved for future tenant isolation (indexed) |
-| `label` | `TEXT NULL` | operator label |
-| `network` | `TEXT NOT NULL` | `devnet` \| `testnet` \| `mainnet-beta` |
-| `derivation_scheme` | `TEXT NOT NULL` | `bip39+slip10-ed25519/v1` |
-| `derivation_path_template` | `TEXT NOT NULL` | `m/44'/501'/{accountIndex}'/0'` |
-| `mnemonic_encrypted` / `mnemonic_iv` / `mnemonic_auth_tag` | `TEXT NOT NULL` | AES-256-GCM, AAD `hd_wallets:<id>:mnemonic:v1` |
-| `encryption_key_version` | `SMALLINT CHECK > 0` | key rotation |
-| `next_account_index` | `BIGINT CHECK >= 0` | allocation counter |
-| `status` | `TEXT CHECK` | `active` \| `provisioning` \| `disabled` \| `archived` |
-| `phrase_provisioned_at` | `TIMESTAMPTZ NULL` | set once when the phrase was revealed |
-| `recovery_token_hash` | `CHAR(64) NULL` | SHA-256 of the issued token (plaintext never stored); cleared on redemption |
-| `recovery_token_expires_at` | `TIMESTAMPTZ NULL` | server-side expiry enforced by redemption; cleared on redemption |
-| `created_at` / `updated_at` | `TIMESTAMPTZ` | |
+### `hd_wallets`
 
-Indexes: `idx_hd_wallets_owner_id`, `idx_hd_wallets_status`.
+HD root metadata and encrypted mnemonic. `owner_id` is nullable and currently only a future tenant-isolation placeholder. It is **not** a tenant registry, not authenticated ownership and not an enforced authorization boundary.
 
-## `wallet_accounts`
+### `wallet_accounts`
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `BIGSERIAL PK` | |
-| `hd_wallet_id` | `BIGINT NOT NULL FK → hd_wallets(id) ON DELETE RESTRICT` | |
-| `public_key` | `TEXT NOT NULL` | `uq_wallet_accounts_public_key` |
-| `account_index` | `BIGINT CHECK >= 0` | `uq_wallet_accounts_index (hd_wallet_id, account_index)` |
-| `derivation_path` | `TEXT NOT NULL` | `uq_wallet_accounts_path (hd_wallet_id, derivation_path)` |
-| `wallet_type` | `TEXT CHECK = 'hd_child'` | |
-| `network` | `TEXT CHECK` | must match the parent (validated in code) |
-| `status` | `TEXT CHECK` | `active` \| `disabled` \| `archived` |
-| `created_at` / `updated_at` | `TIMESTAMPTZ` | |
+HD-derived child public addresses, derivation index/path, network and lifecycle. Parent relation is to `hd_wallets`. Current schema does not provide complete multi-tenant isolation.
 
-Indexes: `idx_wallet_accounts_hd_wallet_id`, `idx_wallet_accounts_public_key`.
+### `blockchain_transactions`
 
-## `blockchain_transactions`
+Immutable transaction identity/evidence for native SOL deposits and withdrawals. The identity/amount fields are protected by database triggers against application updates; deletes are rejected. Lifecycle and confirmation metadata can advance.
 
-Immutable ledger. The identifying columns (`signature`, `wallet_public_key`,
-`direction`) and the recorded amounts are never updated; only lifecycle status
-and confirmation metadata advance.
+This table is **not**:
+- a Double-Entry accounting journal,
+- a partner's customer balance ledger,
+- a monetary reservation/hold ledger,
+- a complete multi-chain normalized transaction store.
 
-Enforcement (migrations 0004 + 0005), so this is a database rule and not only a
-code convention:
+### `api_idempotency_keys`
 
-- `trg_blockchain_transactions_immutable` (BEFORE UPDATE) raises
-  `check_violation` if `signature`, `direction`, `wallet_public_key`,
-  `amount_lamports`, `fee_lamports` or `network` change.
-- `trg_blockchain_transactions_no_delete` (BEFORE DELETE) raises
-  `check_violation` for every delete; corrections must be recorded as a
-  compensating event rather than by removing history.
-- `status`, `commitment`, `slot`, `block_time`, `failure_reason` and `metadata`
-  **stay updatable**, which is what legitimate confirmation progression uses
-  (`updateTransactionStatus`).
+Prevents duplicate processing of withdrawal requests and stores request/transaction metadata. A `processing` row is an execution/idempotency guard, not a reserved customer balance and not proof that partner accounting has held funds.
 
-Limits: a PostgreSQL role that owns the table can disable a trigger, and a
-superuser can always bypass rules. The guarantee holds for the application role
-when it is a non-owner DML role (recommended). Physical retention deletes, if
-ever required, must be an explicit, logged maintenance operation, not an
-application code path.
+### Reconciliation tables
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `BIGSERIAL PK` | |
-| `signature` | `TEXT NOT NULL` | |
-| `direction` | `TEXT CHECK` | `deposit` \| `withdrawal` |
-| `wallet_public_key` | `TEXT NOT NULL` | |
-| `hd_wallet_id` | `BIGINT NULL FK` | set for HD children |
-| `counterparty` | `TEXT NULL` | sender (deposit) / recipient (withdrawal) |
-| `amount_lamports` | `NUMERIC(30,0) CHECK > 0` | |
-| `fee_lamports` | `NUMERIC(30,0) CHECK >= 0` | |
-| `network` | `TEXT CHECK` | |
-| `commitment` | `TEXT CHECK` | `processed` \| `confirmed` \| `finalized` |
-| `status` | `TEXT CHECK` | `detected` \| `confirming` \| `confirmed` \| `credited` \| `failed` \| `rejected` \| `under_review` |
-| `slot` / `block_time` | `BIGINT` / `TIMESTAMPTZ` | |
-| `failure_reason` | `TEXT` | |
-| `idempotency_key` | `VARCHAR(128)` | withdrawal link |
-| `metadata` | `JSONB` | transfer breakdown, wallet type |
+- `deposit_reconciliation_cursors` and `deposit_reconciliation_events`: durable cursor and append-only verification evidence.
+- `withdrawal_reconciliation_cursors` and `withdrawal_reconciliation_events`: durable cursor and append-only withdrawal outcome evidence.
 
-Constraint: `uq_blockchain_transactions_identity (signature, wallet_public_key, direction)`
-— makes deposit/withdrawal recording idempotent.
+These records describe observed/verified operational state. They do not post customer credits/debits or create a partner accounting journal.
 
-## `api_idempotency_keys` (extended by 0003)
+## 3. Required target schema domains
 
-Existing columns plus `wallet_public_key`, `operation`, `transaction_signature`,
-`network`, `to_public_key`, and `amount_lamports`, all added with `ADD COLUMN IF NOT EXISTS`.
-New withdrawal rows persist network, destination and exact lamport amount before signing.
-Legacy rows remain `NULL` for these fields and are excluded from automatic reconciliation. Withdrawal network is
-captured when the idempotency row is created; legacy rows remain `NULL` and are
-excluded from automatic withdrawal reconciliation because their chain cannot
-be established safely.
+The following are architectural requirements and are **not yet implemented as a complete schema**.
 
-## Migration safety
+### Company and credentials
+- `tenants`: immutable tenant ID, legal/display metadata, status and timestamps.
+- `tenant_api_credentials`: tenant ID, credential hash, scopes, status, expiry, rotation/revocation and last-used metadata. Never store plaintext API secrets.
+- `tenant_network_policies`, `tenant_asset_policies`, `tenant_limits`: explicit allowlists and operational controls.
 
-- 0003 is purely additive (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT
-  EXISTS`); it never rewrites, deletes or converts existing wallet rows.
-- 0004 adds columns with `ADD COLUMN IF NOT EXISTS` and creates new tables with
-  `CREATE TABLE IF NOT EXISTS`; the trigger is installed with
-  `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`, so it is re-runnable.
-- 0005 re-installs the same UPDATE trigger (`CREATE OR REPLACE FUNCTION` + drop/
-  create) and adds the DELETE guard; also re-runnable and non-destructive.
-- Both run inside the migration runner's single transaction per file.
-- Legacy wallets are **not** migrated into the HD hierarchy; they keep signing
-  from their own encrypted secret key.
-- Applied migrations are checksum-verified; editing one aborts the runner.
-- Back up the database before applying any migration.
+### Tenant-owned wallet infrastructure
+- Tenant-scoped wallet roots/namespaces, chain/network identity, derivation scheme/version and key-provider reference.
+- Tenant-scoped wallet addresses with unique address identity and derivation allocation constraints.
+- Opaque partner customer/reference fields only where required for routing deposit notifications; do not import customer accounting data.
 
-## Deposit reconciliation
+### Multi-chain transactions and execution
+- Normalized network and asset registry (asset identity includes network plus contract/mint; native asset distinguished explicitly).
+- Deposit observations and transfer/log/event identity, with reorg/finality evidence.
+- Withdrawal execution intents, policy decisions, signed transaction identity, broadcast attempts and reconciliation state.
+- Tenant-scoped idempotency keys unique by tenant and operation.
+- Exact integer smallest-unit amounts and explicit asset decimals.
 
-`deposit_reconciliation_cursors` stores one keyset position per Solana
-network. A completed pass resets the position to zero so the next pass can
-include newly inserted transactions. Failed RPC verification leaves the
-cursor at the last successfully handled transaction.
+### Operational asset attribution
+- Append-only movements/attribution connecting tenant, wallet, asset, transaction, fee and operational purpose.
+- Reconciliation snapshots/observations against chain balances.
+- Suspense/unmatched movement handling and correction events.
 
-`deposit_reconciliation_events` is append-only application history linked to
-`blockchain_transactions` with `ON DELETE RESTRICT`. Outcomes are
-`consistent`, `under_review`, `recovered`, and `rpc_error`. Event rows
-record status transitions and minimal verification context; they do not
-represent wallet credits or debits.
+This domain exists to reconcile infrastructure custody and tenant-attributed activity. It must not be exposed as a customer balance or replace partner Double-Entry accounting.
 
+### Event delivery
+- Transactional outbox, tenant webhook subscriptions, signing-secret references, delivery attempts, retry schedule and dead-letter/replay metadata.
+- Outbox event creation must commit atomically with the application state transition that generated it.
 
-## Withdrawal reconciliation
+## 4. Data and integrity rules
 
-`withdrawal_reconciliation_cursors` stores a keyset position per configured
-Solana network. `withdrawal_reconciliation_events` references the originating
-`api_idempotency_keys` row and is append-only at the database layer. It records
-finalized success/failure, pending, unknown, under-review, safe pre-broadcast
-failure, and RPC error outcomes. It does not represent a monetary hold or
-customer balance movement. The current system has no separate monetary
-reservation ledger.
+1. Every tenant-owned record has a mandatory tenant relation; composite foreign keys prevent mismatched tenant parents.
+2. Tenant identity comes from server-side auth context, never request-body trust.
+3. Idempotency uniqueness is tenant-scoped and binds the canonical operation payload.
+4. Chain transaction uniqueness includes network and chain-specific transfer identity (for tokens, log/event index or equivalent).
+5. Monetary values use integer smallest units or exact NUMERIC; no floating point.
+6. Evidence/event records are append-only; state projections may change only through validated transitions.
+7. A withdrawal timeout does not release operational reservation if broadcast/finality is unknown.
+8. No schema table in BLACKCHIN represents a partner's individual customer available balance or customer Double-Entry ledger.
+
+## 5. Migration and backfill safety
+
+- All new migrations are additive and forward-only.
+- Never drop or rewrite existing wallet/transaction history to introduce tenancy.
+- Existing records must be assigned to a tenant only through an explicit, verified migration mapping; never guess tenant ownership.
+- If ownership cannot be proven, retain records in a quarantined/unassigned state and block signing until resolved.
+- Backfill in bounded, restartable batches with counts, checksums and reconciliation reports.
+- Apply migrations with a least-privilege migration role; application role must not own tables or bypass immutability triggers.
+- Back up PostgreSQL before migration and test restore in staging.
+
+## 6. Current limitations
+
+- No complete tenant registry or tenant-scoped API authentication.
+- `hd_wallets.owner_id` is not enforced.
+- No complete multi-chain asset/transaction schema.
+- No customer monetary reservation ledger (intentionally outside the partner accounting boundary).
+- No complete operational asset attribution ledger yet.
+- No complete transactional webhook delivery implementation.

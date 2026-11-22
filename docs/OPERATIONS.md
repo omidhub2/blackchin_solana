@@ -1,201 +1,109 @@
-# Operations
+# Operations and Cloud Deployment
 
-## 1. Install
+## 1. Current runtime requirements
+
+- Node.js 20+
+- PostgreSQL 13+
+- Solana RPC endpoint for current implementation
+- Environment secrets supplied outside source control
+
+Current scripts:
 
 ```bash
 npm install
-```
-
-Requirements: Node.js 20+, PostgreSQL 13+, a reachable Solana RPC endpoint.
-
-## 2. Environment
-
-Copy `.env.example` to `.env` and fill it in. Required variables:
-
-| Variable | Required | Notes |
-|---|---|---|
-| `DATABASE_URL` | yes | remote hosts must include `sslmode=verify-full` |
-| `ENCRYPTION_KEY` | yes | 64 hex chars (32 bytes); protects all wallet secrets |
-| `API_ACCESS_KEY` | yes | ≥32 chars; single trusted-backend credential |
-| `SOLANA_NETWORK` | no | `devnet` (default) \| `testnet` \| `mainnet-beta` |
-| `SOLANA_RPC_URL` | no | HTTPS only; defaults to the public devnet RPC |
-| `SOLANA_COMMITMENT` | no | `processed` \| `confirmed` (default) \| `finalized` |
-| `SOLANA_WS_URL` | no | `wss://`; derived from the RPC URL when omitted |
-| `ENCRYPTION_KEY_V<n>` | no | key rotation (see `SECURITY.md`) |
-| `API_HOST` / `API_PORT` | no | `127.0.0.1` / `3000` |
-| `DEPOSIT_RECONCILIATION_ENABLED` | no | `false`; set `true` to run periodic deposit chain checks |
-| `DEPOSIT_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |
-| `WITHDRAWAL_RECONCILIATION_ENABLED` | no | `false`; set `true` to reconcile ambiguous withdrawals |
-| `WITHDRAWAL_RECONCILIATION_INTERVAL_MS` | no | `60000`; minimum `5000` ms |
-
-The API refuses to start if `API_ACCESS_KEY` is missing/short or
-`ENCRYPTION_KEY` is not 64 hex characters.
-
-Generate secrets:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-```
-
-## 3. Database migrations
-
-```bash
-npm run db:migrate:status   # what is applied / pending
-npm run db:migrate          # apply pending migrations
-```
-
-The runner takes a PostgreSQL advisory lock, applies each migration and its
-history row in one transaction, verifies SHA-256 checksums of applied files and
-aborts on drift. **Back up the database before migrating.** Never edit an
-applied migration; add the next number.
-
-The API also fails fast at startup if the schema is missing (it probes
-`api_idempotency_keys`, `hd_wallets`, `wallet_accounts`,
-`blockchain_transactions`, `deposit_reconciliation_cursors`,
-`withdrawal_reconciliation_cursors`).
-
-## 4. Start the API
-
-```bash
+npm run db:migrate:status
 npm run db:migrate
 npm run api:start
+npm test
+npm run check:imports
 ```
 
-Health check: `GET http://127.0.0.1:3000/health` (no API key).
+The current API is a single-credential trusted-backend service. Do not expose it as a public multi-tenant partner API until the tenant-security requirements in `SECURITY.md` are implemented.
 
-## 5. Development (devnet)
+## 2. Configuration
 
-```bash
-# .env
-SOLANA_NETWORK=devnet
-SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_COMMITMENT=confirmed
-```
+Copy `.env.example` to a local `.env` for development only. Never commit `.env`, print secrets in logs, or paste secret values into support requests.
 
-1. `POST /api/v1/hd-wallets` → store `recovery.token` securely.
-2. `POST /api/v1/hd-wallets/1/recovery-phrase/consume` with `{"confirm": true}`
-   → write the phrase down offline.
-3. `POST /api/v1/hd-wallets/1/accounts/batch` `{"count": 3}`.
-4. Fund a child address from a devnet faucet, then
-   `POST /api/v1/transfers/<signature>/confirm`.
-
-Never run automated tests against mainnet or with funded wallets.
-
-## 6. Production checklist
-
-- [ ] `SOLANA_NETWORK=mainnet-beta`, dedicated paid RPC provider (public RPC is
-      rate limited), `SOLANA_COMMITMENT=confirmed`.
-- [ ] Secrets from a secret manager, not a checked-in `.env`.
-- [ ] TLS-terminating reverse proxy; keep `API_HOST=127.0.0.1` unless the
-      network boundary is explicit.
-- [ ] Shared rate limiting at the ingress (the built-in limiter is per process).
-- [ ] PostgreSQL: `sslmode=verify-full`, least-privilege role, restricted network
-      access, PITR backups.
-- [ ] Monitoring for HTTP 5xx, `RPC_ERROR`, `RPC_RATE_LIMITED`, and rows in
-      `api_idempotency_keys` with `status='processing'` older than a few minutes.
-- [ ] Process supervisor with graceful shutdown (`SIGTERM` closes Fastify and
-      the pool).
-- [ ] Confirm the custody limitation in `SECURITY.md` is acceptable before
-      exposing the API beyond a trusted backend.
-
-## 7. Backup and recovery
-
-- Back up the database **and** the encryption key separately.
-- Restore drill: restore into a staging database, start the API with a staging
-  key, verify `GET /api/v1/hd-wallets/:id` and one child balance.
-- Lost database, kept mnemonic: re-derive every child address/key offline with
-  `deriveSolanaAccount(mnemonic, index)`
-  (`src/blockchain/solana/hd/derivation.js`) for each known index.
-- Lost encryption key: stored wallet secrets are unrecoverable; only an offline
-  mnemonic copy allows recovery of HD children.
-
-## 8. Reconciliation of stuck withdrawals
-
-Rows in `api_idempotency_keys` with `status='processing'` may represent a
-broadcast whose completion was not recorded. Prefer the automated withdrawal
-reconciliation worker (section 10) after migration 0008. Never mark a signed
-withdrawal failed merely because one RPC lookup returns no result: absence is
-not proof that a submitted transaction cannot still land. Legacy processing
-rows without a recorded network/intent are deliberately excluded from
-automation and require manual investigation using trusted historical logs and
-an authoritative RPC/indexer. Never delete the idempotency row: it prevents a
-duplicate send.
-
-
-## 9. Deposit reconciliation
-
-Migration `0007_deposit_reconciliation.sql` creates a durable keyset cursor and
-append-only verification events. After applying migrations, enable the worker
-with:
-
-```dotenv
-DEPOSIT_RECONCILIATION_ENABLED=true
-DEPOSIT_RECONCILIATION_INTERVAL_MS=60000
-```
-
-The worker checks recorded deposits in bounded batches, re-fetches transaction
-evidence from the configured Solana RPC, records `consistent`,
-`under_review`, `recovered`, or `rpc_error` events, and resumes after
-restarts. A PostgreSQL advisory lock prevents two instances from reconciling
-the same network concurrently. RPC failures trigger worker backoff and do not
-advance the cursor past the unverifiable transaction.
-
-This worker does **not** credit, debit, or otherwise mutate wallet balances.
-A transaction moved to `under_review` requires operator investigation. The
-current service exposes on-chain wallet balances and has no customer-owned
-internal accounting ledger, so there is no safe internal balance compensation
-to perform yet. Never correct balances by editing wallet or transaction rows.
-
-The readiness endpoint includes the reconciliation worker state when enabled.
-
-## 10. Withdrawal reconciliation
-
-Migration `0008_withdrawal_reconciliation.sql` adds a durable keyset cursor and
-append-only evidence. After applying migrations, enable the worker with:
-
-```dotenv
-WITHDRAWAL_RECONCILIATION_ENABLED=true
-WITHDRAWAL_RECONCILIATION_INTERVAL_MS=60000
-```
-
-The worker checks processing withdrawal idempotency records against Solana RPC.
-Only finalized successful transactions with a parsed, single native SOL transfer
-from the stored sender are completed and written to `blockchain_transactions`.
-Finalized on-chain failures become failed idempotency records. Confirmed-but-not-
-finalized, missing, unavailable, or mismatched evidence remains processing or
-under review; the worker never rebroadcasts a signature. A processing row without
-a persisted signature is failed only after five minutes, because the signing flow
-persists the signature before it can call `sendRawTransaction`. A PostgreSQL
-advisory lock prevents concurrent workers from processing the same network.
-
-This project does not currently have a separate monetary reservation/hold ledger.
-The `processing` row is an idempotency guard, not a reserved customer balance.
-Therefore reconciliation does not release or alter wallet funds.
-
-The readiness endpoint includes this worker when enabled.
-
-## 11. Troubleshooting
-
-| Symptom | Likely cause / action |
+| Setting | Purpose |
 |---|---|
-| `API STARTUP FAILED` + relation does not exist | run `npm run db:migrate` |
-| `API_ACCESS_KEY must be configured` | missing/short key in `.env` |
-| `ENCRYPTION_KEY must contain exactly 64 hexadecimal characters` | wrong format |
-| `Decryption failed: authentication failed` | wrong key version or tampered row; check rotation variables |
-| `409 A request with this Idempotency-Key is already processing` | reconcile the stuck key (section 8) |
-| `503 RPC_RATE_LIMITED` | provider quota; use a dedicated RPC or back off |
-| `502 RPC_ERROR` | RPC/network failure; retry after checking provider status |
-| `MIGRATION_DRIFT` | an applied migration file was edited; restore the original file |
+| `DATABASE_URL` | PostgreSQL connection; remote DB requires certificate verification |
+| `ENCRYPTION_KEY` / versioned keys | current AES-256-GCM wallet-secret encryption |
+| `API_ACCESS_KEY` | current single trusted-backend API credential |
+| `SOLANA_NETWORK` | current Solana cluster |
+| `SOLANA_RPC_URL` / `SOLANA_WS_URL` | chain RPC and websocket |
+| `SOLANA_COMMITMENT` | current Solana commitment policy |
+| Deposit/withdrawal reconciliation flags and intervals | enable current reconciliation workers |
 
-## 12. Tests
+The exact accepted variables/defaults are defined in `.env.example` and runtime configuration. Do not assume EVM/TRON configuration exists until those adapters are implemented.
 
-```bash
-npm run test:unit       # crypto, services, ledger, API (no DB, no network)
-npm run test:hd         # HD crypto/services only
-npm run test:api        # HTTP contract tests
-npm run test:solana     # lamport math + transfer extraction
-npm run test:migrations # migration runner
-npm run check:imports   # ESM import/export integrity
-npm run test:wallet     # requires a real PostgreSQL database
-```
+## 3. Cloud target topology
+
+Run independent deployable processes or services for:
+- API gateway and partner-facing REST API.
+- Deposit scanner workers, partitioned by network and tenant/wallet scope.
+- Withdrawal orchestration and reconciliation workers.
+- Webhook delivery workers.
+- Signer/KMS boundary, separated from general API runtime.
+- Central administration and observability.
+
+Use a managed PostgreSQL service in private networking with TLS certificate verification, automated backups and point-in-time recovery. Store secrets in a cloud secret manager. Use a TLS ingress/load balancer with WAF, request-size limits and shared rate limiting. Use paid/redundant RPC providers with provider health monitoring and failover policy.
+
+Scale API and workers independently. All worker jobs must be idempotent and safe under multiple replicas. Distributed locks must be database-backed or use a proven coordination service; loss of ownership must stop new side effects. Do not assume an in-process mutex is sufficient.
+
+## 4. Production security gates
+
+Before public partner onboarding:
+- Complete tenant registry, per-tenant credentials/scopes and revocation.
+- Enforce tenant scope in every repository query and signer operation.
+- Add tenant-aware idempotency and cross-tenant integration tests.
+- Deploy KMS/HSM or approved isolated signer with audited key access.
+- Enable shared rate limiting and durable signed webhooks.
+- Configure network/asset allowlists, withdrawal policy limits and emergency freeze.
+- Separate production/staging databases, RPC credentials, keys and wallet roots.
+- Use non-owner application DB role and least-privilege migration role.
+- Configure alerting, incident response, on-call ownership and tested recovery procedures.
+
+## 5. Database migrations
+
+Migrations are ordered, checksum-verified and applied in a transaction per file. Never edit an applied migration. Back up before applying new migrations. Test migrations against a disposable PostgreSQL database and restore a backup in staging.
+
+For tenancy backfills, do not infer ownership from wallet labels or transaction history. Map existing data to a tenant only with verified evidence; otherwise quarantine it and prevent signing until an operator resolves ownership.
+
+## 6. Monitoring and alerts
+
+Monitor at minimum:
+- API latency, 4xx/5xx rates, authentication failures and tenant rate-limit events.
+- PostgreSQL availability, connection saturation, replication lag and backup age.
+- RPC provider health, chain lag, scan cursor age and confirmation latency.
+- Deposit/withdrawal operations stuck in processing, confirming or under review.
+- Ambiguous broadcasts and reconciliation backlog.
+- Wallet balances, fee/gas reserve thresholds and unexplained movements.
+- Worker lock loss, restart loops and duplicate processing attempts.
+- Webhook retry counts, oldest undelivered event and dead-letter queue.
+- Signer/KMS access, policy denials and emergency freeze events.
+
+Never alert with private keys, mnemonics, API secrets or full sensitive request bodies.
+
+## 7. Backup and disaster recovery
+
+- Back up PostgreSQL with PITR and encrypted off-site retention.
+- Back up key-management metadata and recovery procedures separately from database backups.
+- Test database restore and wallet derivation recovery in isolated staging.
+- Maintain documented key rotation and signer recovery procedures.
+- Never restore production keys into development or staging.
+- Define RPO/RTO and run periodic incident simulations before production launch.
+
+## 8. Current reconciliation behavior
+
+Deposit and withdrawal reconciliation workers currently verify Solana transaction evidence and persist cursor/event history. They do not post partner customer credits/debits and do not create customer monetary holds. A withdrawal idempotency row is not a reserved customer balance. Unknown or ambiguous chain outcomes must remain unresolved until evidence is authoritative.
+
+## 9. Release checklist
+
+- [ ] Tests, import checks and migration tests pass.
+- [ ] Tenant isolation and signer-boundary tests pass (required for multi-tenant release).
+- [ ] Migrations reviewed and backup completed.
+- [ ] Secrets injected from secret manager.
+- [ ] TLS, private networking, shared rate limits and least privilege verified.
+- [ ] RPC failover, chain finality and ambiguous broadcast recovery tested.
+- [ ] Alerts, audit trail, on-call and rollback/restore plan verified.
+- [ ] Legal/compliance review completed for custody and operating jurisdictions.

@@ -1,3 +1,9 @@
+# API Reference — Current Implementation
+
+This document describes endpoints that exist in the current code. It is not the future multi-tenant partner API contract. The target partner API, tenant authentication and webhook model are specified in `PRODUCT_SPECIFICATION.md` and `ARCHITECTURE.md`.
+
+> **Important:** current authentication uses one shared `API_ACCESS_KEY` for a trusted backend. It does not provide tenant isolation. Current chain support is native SOL on Solana only. Do not expose this API publicly to multiple companies.
+
 # API Reference
 
 Base path: `/api/v1`. Every endpoint except `GET /health` requires

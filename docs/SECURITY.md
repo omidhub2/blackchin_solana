@@ -1,128 +1,103 @@
-# Security
+# Security Model
 
-## 1. Custody model (read this first)
+## 1. Product security boundary
 
-The service is a **custodial, single-tenant backend**. `API_ACCESS_KEY` is one
-shared secret that authenticates a trusted backend service; it is **not**
-end-user authentication, not multi-tenant isolation, and must never be shipped
-to browsers or third parties.
+BLACKCHIN CORE is intended to operate wallet infrastructure and signing for multiple partner companies. It therefore handles high-impact signing authority and must treat tenant isolation as a critical security boundary.
 
-Implemented boundary:
+**Current limitation:** the current code authenticates requests with one shared `API_ACCESS_KEY`. It is a trusted-backend credential, not multi-tenant authentication. `hd_wallets.owner_id` is not enforced. The current API must not be exposed as a public multi-company service until tenant authentication, authorization and isolation are implemented and tested.
 
-- every operation is authorized by the API key (fail closed when unset),
-- wallet lifecycle status is enforced before signing,
-- network identity is enforced (an HD child on `mainnet-beta` cannot be spent by
-  a `devnet` deployment),
-- withdrawals require the API key **and** `approved: true` **and** a fresh
-  idempotency key.
+Partner companies remain responsible for authenticating their end users and authorizing customer withdrawals. BLACKCHIN independently validates the authenticated tenant, its wallet ownership, configured limits, destination policy and infrastructure risk controls before signing.
 
-Not implemented (and not claimed): per-user JWT/OAuth, tenant-scoped row
-security, spending limits per owner, approval workflows with a second actor.
-`hd_wallets.owner_id` exists so tenant-scoped authorization can be added without
-a migration, but it is not enforced anywhere yet. Do not expose this API to the
-public internet or to untrusted clients.
+## 2. Tenant authentication requirements (target)
 
-## 2. Encryption
+- Unique credentials per tenant and environment; never one global partner key.
+- Store only strong hashes of API secrets; reveal a secret only at issuance/rotation.
+- Support credential scopes, expiry, revocation, rotation and audit.
+- Derive tenant identity from successful credential verification. Never authorize using a caller-supplied tenant ID.
+- Bind sensitive requests to timestamp, nonce, HTTP method, path and body hash using a request-signing scheme or equivalent strong authentication.
+- Enforce per-tenant and per-route rate limits, replay protection and idempotency.
+- Use separate platform-admin identity and audited break-glass controls.
+- Redact authorization headers, signatures, recovery tokens, mnemonics and private material from logs.
 
-- Algorithm: AES-256-GCM, 12-byte random IV per encryption, 16-byte auth tag.
-- Key material: `ENCRYPTION_KEY` (64 hex chars = 32 bytes).
-- Format-compatible with the legacy wallet storage, so the same key covers old
-  standalone wallets and new HD roots.
-- HD root mnemonics use additional authenticated data
-  `hd_wallets:<id>:mnemonic:v1`. Copying a ciphertext to another row id makes
-  decryption fail.
-- Stored hex fields are format-validated before any crypto call; failures throw
-  a generic `Decryption failed` error that never includes key or plaintext
-  material.
+## 3. Tenant data and signer isolation
 
-### Key rotation
+- Every tenant-owned query and mutation must include tenant context.
+- Use tenant-scoped foreign keys/unique constraints and non-null ownership references.
+- Add PostgreSQL row-level security where appropriate as defense in depth; application repositories must still scope queries.
+- Verify tenant ownership again at the signing boundary immediately before deriving/unlocking a key.
+- Never allow one tenant to read another tenant's wallet, transaction, address, webhook, policy or report.
+- Test cross-tenant IDOR, guessed IDs, idempotency collisions, webhook replay and signer access.
+- Wallet roots and derivation namespaces must be isolated by tenant and chain.
 
-`ENCRYPTION_KEY_V<n>` variables supersede `ENCRYPTION_KEY` for new writes
-(highest version wins). Each row stores `encryption_key_version`, so old rows
-stay readable while their key variable remains configured. Removing a version
-that rows still reference makes those rows undecryptable. Rotation procedure:
+## 4. Key custody and signing
 
-1. add `ENCRYPTION_KEY_V2`, restart (new writes use v2),
-2. re-encrypt existing rows offline or on read/rewrite,
-3. only after no row references v1, remove `ENCRYPTION_KEY`.
+Current implementation uses AES-256-GCM encryption for stored wallet secrets and environment-provided encryption keys. This is useful application-layer encryption but is not a KMS/HSM integration.
 
-### Key management
+Production target:
+- Keep signing authority in a dedicated signer service or isolated KMS/HSM-backed provider.
+- Separate API runtime, database credentials and signing permissions.
+- Enforce transaction policy before signing; signer accepts an explicit authorized intent, not arbitrary raw client instructions.
+- Apply key versioning, rotation, access logging, backup and recovery procedures.
+- Require dual control or additional approvals for high-risk treasury/key operations.
+- Never place plaintext keys/mnemonics in logs, API responses, traces, crash reports or source control.
+- Recovery phrase provisioning remains one-time, explicit, no-store and operator-controlled.
 
-- Keys come from the environment only; nothing is hardcoded or committed.
-- `createEnvKeyProvider()` is a pluggable interface: a KMS/HSM-backed provider
-  can be injected wherever a key provider is expected (`createServices({
-  keyProvider })`). **No cloud KMS integration is implemented.**
+JavaScript memory zeroization is best-effort and cannot guarantee that runtime copies never exist. Do not describe it as hardware-grade protection.
 
-## 3. Secret handling
+## 5. Withdrawal safety
 
-- Private keys and mnemonics are never logged, never returned by list/read
-  endpoints and never sent to RPC providers (only signed raw transactions and
-  public keys leave the process).
-- The recovery phrase leaves the service **once**, through a purpose-bound
-  one-time token and an explicitly confirming endpoint; the response is marked
-  `no-store`.
-- Derived child keys exist only for the callback lifetime of
-  `withSigningKey()`.
-- Zeroization is best-effort: web3.js returns a *copy* from
-  `keypair.secretKey`, so `zeroizeKeypair()` overwrites `keypair._keypair`
-  buffers in place. JavaScript/Node cannot guarantee the runtime never copies
-  these buffers before GC, so this is hardening, not a hardware guarantee.
+- Authenticate tenant and validate wallet belongs to it.
+- Require the partner's authenticated business authorization, represented by a verifiable request context/approval reference; a freely supplied boolean is not sufficient in the target design.
+- Validate asset, network, amount, destination, wallet lifecycle, tenant limits, global risk rules and available infrastructure funds.
+- Use exact integer smallest units or exact decimal arithmetic; never IEEE-754 floating point for money.
+- Use tenant-scoped idempotency keys bound to the canonical request body.
+- Persist an execution intent before signing and persist signed transaction identity before broadcast.
+- Never automatically rebroadcast an ambiguous signed transaction.
+- Keep unknown outcomes unresolved until authoritative reconciliation.
+- Separate partner customer holds from BLACKCHIN operational execution reservations.
 
-## 4. Idempotency and duplicate prevention
+## 6. Deposit verification
 
-Withdrawals:
+Validate chain/network, transaction success, destination, native/token asset identity, contract or mint, decimals, amount, confirmation/finality and chain-specific event identity. Enforce uniqueness for transaction hash plus transfer/log index and destination context as appropriate. Do not treat an RPC timeout as proof that a transaction does not exist. Reorg-aware adapters must be able to move provisional observations into under-review states.
 
-1. `INSERT ... ON CONFLICT DO NOTHING` reserves the key as `processing`,
-2. identical key + different body/wallet/operation → `409`,
-3. `completed` → stored response replayed with `replayed: true`,
-4. `processing` → `409` (never auto-rebroadcast),
-5. `failed` → `409` (key cannot be reused).
+## 7. Secret and transport handling
 
-A crash between broadcast and the completion write leaves the key in
-`processing` on purpose: an operator reconciles the signature instead of risking
-a double spend. If only the completion write fails after a successful broadcast,
-the response is still returned and the key stays `processing`.
+- TLS for every external API and webhook endpoint.
+- PostgreSQL remote connections use certificate verification (`sslmode=verify-full`).
+- Parameterized SQL only; validate request shape and reject unknown fields.
+- Request body limits, strict timeouts, secure headers and generic external errors.
+- Rate limiting must be shared across API replicas for production-sensitive routes.
+- Secrets come from a managed secret store, not committed `.env` files.
+- Restrict outbound RPC and webhook networking; webhook delivery must block private, loopback, link-local and cloud metadata destinations and revalidate redirects/DNS.
 
-Deposits: `blockchain_transactions` has a unique
-`(signature, wallet_public_key, direction)` constraint, so recording the same
-deposit twice is a 200 replay, never a second credit.
+## 8. Audit and immutability
 
-## 5. Input and transport hardening
+Record who/what initiated each operation, tenant, credential ID, correlation ID, request hash, policy decision, wallet, asset, amount, chain transaction identity, signer decision and state transitions. Do not log secret request bodies.
 
-- No SQL string interpolation anywhere: every query is parameterized.
-- Request bodies are size-limited (32 KB) and shape-validated; unknown fields
-  are rejected so clients cannot inject `accountIndex`/`derivationPath`.
-- Route parameters (`:id`, `:accountIndex`, `:signature`, public keys, amounts)
-  are validated before any service call.
-- 500 responses are generic; internal messages stay in the server log.
-- Fixed-window, in-memory rate limits: HD root creation 20/min, account
-  creation 30/min, recovery provisioning 5/min, estimates 60/min, withdrawals
-  10/min — **per process**. Multi-instance deployments need a shared limiter at
-  the ingress.
-- TLS must terminate at the reverse proxy; the server binds to `127.0.0.1` by
-  default.
-- PostgreSQL connections to remote hosts must use `sslmode=verify-full`
-  (enforced at startup).
+Immutable chain evidence and audit events must be append-only for the application role. Corrections are represented by compensating events or explicit superseding evidence. Database owners/superusers can bypass ordinary triggers; production privileges must separate migration ownership from application DML.
 
-## 6. Threat model (abridged)
+## 9. Threats and required controls
 
-| Threat | Mitigation | Residual risk |
-|---|---|---|
-| Stolen API key | rate limits, no key material in responses | full withdrawal authority for every wallet |
-| Compromised DB backup | AES-256-GCM, key lives outside the DB | key and backup stolen together |
-| Malicious RPC provider | amounts verified against parsed transfers; destination checked | RPC could hide/reorder data (no light-client checks) |
-| Double spend via retries | idempotency reservation, unique ledger identity | manual reconciliation of `processing` rows |
-| Ciphertext swapping between rows | AAD includes row id and purpose | — |
-| Recovery token interception | purpose-derived key, single redemption, `no-store` | token valid for the configured window until redeemed |
-| Memory scraping on host | minimal key lifetime, best-effort zeroization | process memory is not protected by an HSM |
+| Threat | Required control |
+|---|---|
+| Tenant A accesses tenant B | tenant context in every repository, DB constraints/RLS, cross-tenant tests |
+| Stolen API credential | scopes, short rotation window, revocation, IP policy, rate limits, signed requests |
+| Compromised API process | isolated signer/KMS, least privilege, policy enforcement outside API |
+| Database/backup theft | encryption, separately stored keys, restricted backups, restore drills |
+| Malicious/incorrect RPC | provider diversity, chain-specific verification, reconciliation |
+| Duplicate webhook or API retry | immutable event IDs, idempotency, transactional outbox |
+| Duplicate withdrawal | durable intent, persisted signature, no blind rebroadcast |
+| Key misuse by operator | dual control, audit, emergency freeze, separation of duties |
+| Reorg or delayed finality | chain-specific finality state machine and reconciliation |
+| Webhook SSRF | HTTPS allowlist/policy, IP/DNS checks, redirect restrictions, egress controls |
 
-## 7. Backup and recovery
+## 10. Production release gates
 
-- Back up PostgreSQL (wallets, hd_wallets, wallet_accounts,
-  blockchain_transactions) **and** the encryption key, separately. Neither is
-  useful without the other.
-- A root mnemonic recovered offline re-derives every child address and private
-  key (`m/44'/501'/{i}'/0'`), which is the disaster-recovery path for account
-  rows that are lost but whose index is known.
-- Test restores in a non-production environment; never restore production keys
-  into a development database.
+Do not declare multi-tenant production readiness until:
+- Tenant authentication and complete tenant-scoped authorization exist.
+- Cross-tenant API, repository, database and signer tests pass.
+- KMS/HSM or approved isolated signer integration is deployed and recovery-tested.
+- Shared rate limiting, webhook outbox and replay protection are deployed.
+- Concurrent withdrawal, ambiguous broadcast, worker lock-loss and chain-reorg tests pass.
+- Security review, incident response, backup restore and key recovery drills are complete.
+- Applicable custody, safeguarding, sanctions and money-transmission obligations are reviewed by qualified counsel/compliance specialists for operating jurisdictions.
