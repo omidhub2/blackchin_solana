@@ -12,6 +12,8 @@ export function createHealthService({
   workerEnabled = false,
   reconciliationWorker = null,
   reconciliationEnabled = false,
+  withdrawalReconciliationWorker = null,
+  withdrawalReconciliationEnabled = false,
   network,
   scope,
   queueDepth = null,
@@ -36,7 +38,8 @@ export function createHealthService({
       const checks = {
         database: 'unknown',
         scanner: workerEnabled ? 'unknown' : 'disabled',
-        reconciliation: reconciliationEnabled ? 'unknown' : 'disabled'
+        reconciliation: reconciliationEnabled ? 'unknown' : 'disabled',
+        withdrawalReconciliation: withdrawalReconciliationEnabled ? 'unknown' : 'disabled'
       };
       let ready = true;
 
@@ -58,6 +61,20 @@ export function createHealthService({
           checks.reconciliation = reconciliationHealth.state;
           checks.reconciliationStale = reconciliationHealth.stale;
           if (reconciliationHealth.state === 'stopped' || reconciliationHealth.state === 'failed') {
+            ready = false;
+          }
+        }
+      }
+
+      if (withdrawalReconciliationEnabled) {
+        if (!withdrawalReconciliationWorker) {
+          checks.withdrawalReconciliation = 'not_started';
+          ready = false;
+        } else {
+          const withdrawalHealth = withdrawalReconciliationWorker.health();
+          checks.withdrawalReconciliation = withdrawalHealth.state;
+          checks.withdrawalReconciliationStale = withdrawalHealth.stale;
+          if (withdrawalHealth.state === 'stopped' || withdrawalHealth.state === 'failed') {
             ready = false;
           }
         }
