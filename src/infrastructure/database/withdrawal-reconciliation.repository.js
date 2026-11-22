@@ -18,11 +18,13 @@ export async function ensureWithdrawalReconciliationCursor(db, network) {
 export async function listWithdrawalReconciliationCandidates(db, network, afterId, limit) {
   const result = await db.query(
     `SELECT id, idempotency_key, wallet_public_key, transaction_signature,
-            status, operation, response_json, created_at, updated_at
+            to_public_key, amount_lamports, status, operation, response_json, created_at, updated_at
        FROM api_idempotency_keys
       WHERE operation = 'withdrawal'
         AND status = 'processing'
         AND network = $1
+        AND to_public_key IS NOT NULL
+        AND amount_lamports IS NOT NULL
         AND id > $2
         AND (
           transaction_signature IS NOT NULL
