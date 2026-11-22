@@ -19,4 +19,4 @@ jobs:
         with:
           node-version: 20
       - name: Run deposit scanner tests
-        run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js
+        run: node --test test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js
