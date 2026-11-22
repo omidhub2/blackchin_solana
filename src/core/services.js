@@ -15,6 +15,7 @@ import { createBalanceService } from './balance/hd-balance.service.js';
 import { createDepositService } from './deposits/deposit.service.js';
 import { createDepositReconciliationService } from './deposits/deposit-reconciliation.service.js';
 import { createWithdrawalService } from './withdrawals/withdrawal.service.js';
+import { createTenantWithdrawalService } from './withdrawals/tenant-withdrawal.service.js';
 import { createWithdrawalReconciliationService } from './withdrawals/withdrawal-reconciliation.service.js';
 import { createTransactionService } from './transactions/transaction-history.service.js';
 import { standaloneWalletService } from './wallet/standalone-wallet.service.js';
@@ -78,6 +79,7 @@ export function createServices(overrides = {}) {
     hdWallets: hdWalletService,
     childWallets: childWalletService,
     tenantWallets: createTenantWalletService(deps),
+    tenantWithdrawals: createTenantWithdrawalService(deps),
     balances: createBalanceService(deps),
     deposits: depositService,
     withdrawals: createWithdrawalService(deps),
