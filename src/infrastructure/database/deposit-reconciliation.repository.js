@@ -21,7 +21,7 @@ export async function ensureReconciliationCursor(db, network) {
 
 export async function listReconciliationCandidates(db, network, afterId, limit) {
   const result = await db.query(
-    `SELECT id, signature, direction, wallet_public_key, hd_wallet_id,
+    `SELECT id, tenant_id, signature, direction, wallet_public_key, hd_wallet_id,
             counterparty, amount_lamports, fee_lamports, network, commitment,
             status, slot, block_time, failure_reason, idempotency_key,
             metadata, created_at, updated_at
