@@ -18,13 +18,16 @@ const CREATE_FIELDS = ['label', 'ownerId'];
 const STATUS_VALUES = ['active', 'disabled', 'archived'];
 
 export async function tenantWalletRoutes(app) {
-  const db = app.services?.deps?.db;
-  if (!db || typeof db.query !== 'function') {
-    throw new TypeError('Tenant API requires the configured database');
-  }
+  const db = app.services?.deps?.db ?? null;
+  const tenantAuth = db && typeof db.query === 'function'
+    ? createTenantAuthHook({ db })
+    : async (_request, reply) => reply.code(503).send({
+        error: 'TENANT_API_UNAVAILABLE',
+        message: 'Tenant authentication is not configured'
+      });
 
-  app.addHook('preHandler', createTenantAuthHook({ db }));
-  const distributed = { db };
+  app.addHook('preHandler', tenantAuth);
+  const distributed = db ? { db } : null;
   const createLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-hd-create', distributed });
   const accountLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'tenant-address-create', distributed });
   const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'tenant-recovery', distributed });
