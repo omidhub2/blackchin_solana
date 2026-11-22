@@ -25,3 +25,21 @@ CREATE INDEX IF NOT EXISTS idx_deposit_reconciliation_events_transaction
     ON deposit_reconciliation_events(transaction_id, checked_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deposit_reconciliation_events_network
     ON deposit_reconciliation_events(network, checked_at DESC);
+
+-- Reconciliation evidence is append-only at the database layer.
+CREATE OR REPLACE FUNCTION forbid_deposit_reconciliation_event_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION
+        'deposit_reconciliation_events are append-only (event id %)', OLD.id
+        USING ERRCODE = 'check_violation';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_deposit_reconciliation_events_immutable
+    ON deposit_reconciliation_events;
+
+CREATE TRIGGER trg_deposit_reconciliation_events_immutable
+    BEFORE UPDATE OR DELETE ON deposit_reconciliation_events
+    FOR EACH ROW
+    EXECUTE FUNCTION forbid_deposit_reconciliation_event_mutation();
