@@ -29,6 +29,9 @@ function buildDepositHarness() {
 
   const db = {
     async query(sql, params) {
+      if (sql.includes('SELECT tenant_id FROM wallet_accounts')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM wallet_accounts WHERE public_key')) {
         return { rows: params[0] === destination ? [account] : [], rowCount: params[0] === destination ? 1 : 0 };
       }
@@ -193,6 +196,9 @@ test('previously credited deposits enter review when missing from chain and reco
   let chainStatus = 'finalized';
   const db = {
     async query(sql, params) {
+      if (sql.includes('SELECT tenant_id FROM wallet_accounts')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM blockchain_transactions') && sql.includes('WHERE signature = $1')) {
         return { rows: [existing], rowCount: 1 };
       }
