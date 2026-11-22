@@ -55,6 +55,7 @@ JavaScript memory zeroization is best-effort and cannot guarantee that runtime c
 - Never automatically rebroadcast an ambiguous signed transaction.
 - Keep unknown outcomes unresolved until authoritative reconciliation.
 - Separate partner customer holds from BLACKCHIN operational execution reservations.
+Current tenant withdrawal submission is fail-closed: it returns `503 WITHDRAWAL_POLICY_UNAVAILABLE` unless a trusted `tenantWithdrawalPolicy.authorize` provider is injected. The provider must validate the partner approval reference, authenticated tenant credential, destination/asset/network, tenant-specific amount and velocity limits, risk controls and emergency freeze state. The API's approval reference is not proof by itself. Do not grant `withdrawals:write` or expose the route publicly until this provider is implemented, reviewed and tested.
 
 ## 6. Deposit verification
 
