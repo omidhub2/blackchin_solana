@@ -410,15 +410,14 @@ export function createDepositScanner({
             const highWaterBlockTime = highWaterEntry?.blockTime
               ? new Date(highWaterEntry.blockTime * 1000)
               : null;
+            await assertOwnership();
             const advanced = resumingBackfill
-              ? await assertOwnership();
-          await cursors.completeBackfill(db, cursor.id, {
+              ? await cursors.completeBackfill(db, cursor.id, {
                 lastSignature: highWaterSignature,
                 lastSlot: highWaterSlot,
                 lastBlockTime: highWaterBlockTime
               })
-              : await assertOwnership();
-          await cursors.advanceCursor(db, cursor.id, {
+              : await cursors.advanceCursor(db, cursor.id, {
                 lastSignature: highWaterSignature,
                 lastSlot: highWaterSlot,
                 lastBlockTime: highWaterBlockTime
@@ -455,6 +454,7 @@ export function createDepositScanner({
       } catch (error) {
         metrics.lastError = error.message;
         if (activeCursorId !== null) {
+          await assertOwnership().catch(() => {});
           await cursors.markCursorError(db, activeCursorId, error.message).catch(() => {});
         }
         throw error;
