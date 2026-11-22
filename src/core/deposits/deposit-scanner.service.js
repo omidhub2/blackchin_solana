@@ -49,7 +49,7 @@ function rpcFailure(error, context) {
  * @param {{ network: string, commitment: string, getRecentSignatures: Function,
  *           getParsedTransaction: Function, getSignatureStatuses: Function,
  *           extractIncomingTransfers: Function }} deps.rpc
- * @param {{ isRecorded: Function, recordVerifiedDeposit: Function }} deps.deposits
+ * @param {{ isRecorded: Function, recordVerifiedDeposit: Function, refreshDeposit: Function }} deps.deposits
  * @param {object} deps.cursors  deposit-scanner repository
  * @param {(scope: string, network: string) => Promise<Array<{publicKey: string, hdWalletId: string|null}>>}
  *        deps.resolveWallets
@@ -159,14 +159,6 @@ export function createDepositScanner({
       metrics.runs += 1;
       metrics.lastRunAt = new Date().toISOString();
 
-      const cursor = await cursors.ensureCursor(db, { network, scope, runAt: new Date() });
-
-      if (!cursor) {
-        throw new AppError('Scanner cursor could not be created', 500, 'SCANNER_STATE_ERROR');
-      }
-
-      await cursors.markCursorRunning(db, cursor.id, new Date());
-
       const wallets = await resolveWallets(scope, network);
 
       const summary = {
@@ -177,14 +169,28 @@ export function createDepositScanner({
         recorded: 0,
         duplicates: 0,
         failed: 0,
-        cursor: { lastSignature: cursor.lastSignature, lastSlot: cursor.lastSlot }
+        cursors: []
       };
 
-      let lastHandled = null;
       let stopReason = null;
 
       try {
         scan: for (const wallet of wallets) {
+          // Solana signature history is address-specific; never share a cursor
+          // between different wallet addresses.
+          const walletScope = `address:${wallet.publicKey}`;
+          const cursor = await cursors.ensureCursor(db, {
+            network,
+            scope: walletScope,
+            runAt: new Date()
+          });
+
+          if (!cursor) {
+            throw new AppError('Scanner cursor could not be created', 500, 'SCANNER_STATE_ERROR');
+          }
+
+          await cursors.markCursorRunning(db, cursor.id, new Date());
+          let lastHandled = null;
           const pages = Math.max(1, Math.ceil(maxBatch / pageSize));
 
           for (let page = 0; page < pages; page += 1) {
@@ -200,6 +206,8 @@ export function createDepositScanner({
               const known = await deposits.isRecorded(entry.signature, wallet.publicKey);
 
               if (known) {
+                // Revisit known rows so their confirmation state can advance.
+                await deposits.refreshDeposit(entry.signature, wallet.publicKey);
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
                 lastHandled = entry;
@@ -209,7 +217,6 @@ export function createDepositScanner({
               const parsed = await fetchParsed(entry.signature);
 
               if (!parsed) {
-                // Not indexed yet: never cursor past it.
                 log('scanner.transaction_not_available', { signature: entry.signature });
                 stopReason = 'transaction_unavailable';
                 break scan;
@@ -258,6 +265,7 @@ export function createDepositScanner({
               } else {
                 summary.duplicates += 1;
                 metrics.duplicatesSkipped += 1;
+                await deposits.refreshDeposit(entry.signature, wallet.publicKey);
               }
 
               lastHandled = entry;
@@ -265,28 +273,33 @@ export function createDepositScanner({
 
             if (signatures.length < pageSize) break;
           }
+
+          if (lastHandled) {
+            const advanced = await cursors.advanceCursor(db, cursor.id, {
+              lastSignature: lastHandled.signature,
+              lastSlot: lastHandled.slot ?? null,
+              lastBlockTime: lastHandled.blockTime
+                ? new Date(lastHandled.blockTime * 1000)
+                : null
+            });
+
+            summary.cursors.push({
+              address: wallet.publicKey,
+              lastSignature: advanced.lastSignature,
+              lastSlot: advanced.lastSlot
+            });
+          } else {
+            summary.cursors.push({
+              address: wallet.publicKey,
+              lastSignature: cursor.lastSignature,
+              lastSlot: cursor.lastSlot
+            });
+          }
+
+          if (stopReason) {
+            await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
+          }
         }
-
-        // Advance only after everything above was persisted. A crash between
-        // persist and advance re-scans; the unique deposit identity makes that
-        // idempotent.
-        if (lastHandled) {
-          const advanced = await cursors.advanceCursor(db, cursor.id, {
-            lastSignature: lastHandled.signature,
-            lastSlot: lastHandled.slot ?? null,
-            lastBlockTime: lastHandled.blockTime
-              ? new Date(lastHandled.blockTime * 1000)
-              : null
-          });
-
-          summary.cursor = {
-            lastSignature: advanced.lastSignature,
-            lastSlot: advanced.lastSlot
-          };
-        } else if (stopReason) {
-          await cursors.markCursorError(db, cursor.id, 'parsed transaction unavailable');
-        }
-
         return stopReason ? { ...summary, stopped: stopReason } : summary;
       } catch (error) {
         metrics.lastError = error.message;
