@@ -279,7 +279,7 @@ export function createDepositService({ db, rpc, network, commitment }) {
         throw notFound('Deposit address was not found for this tenant', 'WALLET_NOT_FOUND');
       }
 
-      return insertBlockchainTransaction(db, {
+      const inserted = await insertBlockchainTransaction(db, {
         signature,
         direction: 'deposit',
         walletPublicKey: publicKey,
@@ -301,6 +301,19 @@ export function createDepositService({ db, rpc, network, commitment }) {
           walletType: hdWalletId ? 'hd_child' : 'standalone'
         }
       });
+
+      if (inserted.created || tenantId === null || tenantId === undefined) return inserted;
+
+      const tenantExisting = await findDeposit(signature, publicKey, tenantId);
+      if (tenantExisting) return { transaction: tenantExisting, created: false };
+
+      // A global uniqueness conflict may be a legacy NULL-tenant row or a
+      // record owned by another tenant. Never adopt or expose that record.
+      const conflicting = await findTransactionBySignature(db, signature, publicKey, 'deposit');
+      if (conflicting) {
+        return { transaction: null, created: false, ownershipConflict: true };
+      }
+      return inserted;
     },
 
     /**
