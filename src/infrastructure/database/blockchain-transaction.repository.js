@@ -7,6 +7,7 @@
 
 const TX_COLUMNS = `
   id,
+  tenant_id,
   signature,
   direction,
   wallet_public_key,
@@ -41,6 +42,7 @@ export function mapBlockchainTransaction(row) {
 
   return {
     id: String(row.id),
+    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id),
     signature: row.signature,
     direction: row.direction,
     walletPublicKey: row.wallet_public_key,
@@ -83,7 +85,8 @@ export async function insertBlockchainTransaction(
     slot = null,
     blockTime = null,
     idempotencyKey = null,
-    metadata = {}
+    metadata = {},
+    tenantId = null
   }
 ) {
   const result = await db.query(
@@ -102,9 +105,10 @@ export async function insertBlockchainTransaction(
         slot,
         block_time,
         idempotency_key,
-        metadata
+        metadata,
+        tenant_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)
       ON CONFLICT (signature, wallet_public_key, direction) DO NOTHING
       RETURNING ${TX_COLUMNS}
     `,
@@ -122,7 +126,8 @@ export async function insertBlockchainTransaction(
       slot,
       blockTime,
       idempotencyKey,
-      JSON.stringify(metadata)
+      JSON.stringify(metadata),
+      tenantId === null ? null : String(tenantId)
     ]
   );
 
@@ -226,5 +231,64 @@ export async function listTransactionsByHdWallet(
     [hdWalletId, direction, limit, offset]
   );
 
+  return result.rows.map(mapBlockchainTransaction);
+}
+
+
+function assertTenantId(tenantId) {
+  if ((typeof tenantId !== 'string' && typeof tenantId !== 'number' && typeof tenantId !== 'bigint') ||
+      !/^[1-9][0-9]*$/.test(String(tenantId))) {
+    throw new TypeError('tenantId must be a positive integer');
+  }
+  return String(tenantId);
+}
+
+/** Tenant-only transaction lookup. NULL legacy rows are never visible. */
+export async function findTransactionBySignatureForTenant(db, tenantId, signature, walletPublicKey, direction = 'deposit') {
+  const tenant = assertTenantId(tenantId);
+  const result = await db.query(
+    `SELECT ${TX_COLUMNS}
+     FROM blockchain_transactions
+     WHERE tenant_id = $1 AND signature = $2
+       AND wallet_public_key = $3 AND direction = $4
+     LIMIT 1`,
+    [tenant, signature, walletPublicKey, direction]
+  );
+  return mapBlockchainTransaction(result.rows[0]);
+}
+
+/** Tenant-only status transition; the UPDATE itself enforces ownership. */
+export async function updateTransactionStatusForTenant(db, tenantId, id, input) {
+  const tenant = assertTenantId(tenantId);
+  const { status, commitment, slot, blockTime, failureReason, metadata, clearFailureReason = false } = input ?? {};
+  if (!TRANSACTION_STATUSES.includes(status)) throw new TypeError('Invalid transaction status');
+  const result = await db.query(
+    `UPDATE blockchain_transactions
+     SET status = $3,
+         commitment = COALESCE($4, commitment),
+         slot = COALESCE($5, slot),
+         block_time = COALESCE($6, block_time),
+         failure_reason = CASE WHEN $9 THEN NULL ELSE COALESCE($7, failure_reason) END,
+         metadata = CASE WHEN $8::jsonb IS NULL THEN metadata ELSE metadata || $8::jsonb END,
+         updated_at = NOW()
+     WHERE tenant_id = $1 AND id = $2
+     RETURNING ${TX_COLUMNS}`,
+    [tenant, id, status, commitment ?? null, slot ?? null, blockTime ?? null,
+      failureReason ?? null, metadata ? JSON.stringify(metadata) : null, clearFailureReason === true]
+  );
+  return mapBlockchainTransaction(result.rows[0]);
+}
+
+/** Tenant-only deposit history; never returns unassigned legacy rows. */
+export async function listDepositsForTenant(db, tenantId, { limit = 20, offset = 0 } = {}) {
+  const tenant = assertTenantId(tenantId);
+  const result = await db.query(
+    `SELECT ${TX_COLUMNS}
+     FROM blockchain_transactions
+     WHERE tenant_id = $1 AND direction = 'deposit'
+     ORDER BY created_at DESC, id DESC
+     LIMIT $2 OFFSET $3`,
+    [tenant, limit, offset]
+  );
   return result.rows.map(mapBlockchainTransaction);
 }
