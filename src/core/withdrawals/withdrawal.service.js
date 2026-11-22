@@ -50,7 +50,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         INSERT INTO api_idempotency_keys
           (idempotency_key, request_hash, status, wallet_public_key, operation, network, to_public_key, amount_lamports)
         VALUES ($1, $2, 'processing', $3, 'withdrawal', $4, $5, $6)
-        ON CONFLICT (idempotency_key) DO NOTHING
+        ON CONFLICT (idempotency_key) WHERE tenant_id IS NULL DO NOTHING
         RETURNING idempotency_key
       `,
       [idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
@@ -64,7 +64,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       `
         SELECT request_hash, status, response_json, wallet_public_key, operation, network, to_public_key, amount_lamports
         FROM api_idempotency_keys
-        WHERE idempotency_key = $1
+        WHERE idempotency_key = $1 AND tenant_id IS NULL
         LIMIT 1
       `,
       [idempotencyKey]
@@ -105,7 +105,7 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       `
         UPDATE api_idempotency_keys
         SET status = 'failed', updated_at = NOW()
-        WHERE idempotency_key = $1
+        WHERE idempotency_key = $1 AND tenant_id IS NULL
           AND status = 'processing'
           AND transaction_signature IS NULL
       `,
