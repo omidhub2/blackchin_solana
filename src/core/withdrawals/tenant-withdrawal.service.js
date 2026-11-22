@@ -25,7 +25,7 @@ function assertTenantId(value) {
 }
 
 function parseAmountLamports(amountSol) {
-  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(amountSol)) {
+  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,9})?$/.test(amountSol)) {
     throw badRequest('amountSol must be a positive decimal string with at most 9 decimal places', 'INVALID_AMOUNT');
   }
   const [whole, fraction = ''] = amountSol.split('.');
