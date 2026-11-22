@@ -17,6 +17,14 @@ This document describes the **current database**, not the complete target schema
 
 ## 2. Current tables and their meaning
 
+### `tenants` and `tenant_api_credentials` (migration 0009)
+
+The tenant registry stores company identity/status. API credential rows store a public key prefix, a SHA-256 secret hash, scopes and lifecycle metadata; plaintext credentials are not stored. These tables are a **database foundation only**: runtime authentication, credential issuance/rotation APIs, scope enforcement and tenant-aware repository authorization are not yet connected.
+
+Migration 0009 adds nullable `tenant_id` attribution columns to existing wallet, transaction, idempotency and outbox records. Existing rows remain unassigned because their company ownership cannot safely be inferred. Tenant ownership becomes immutable after it is assigned. Composite foreign keys ensure an assigned HD child/transaction tenant matches its HD root.
+
+`NULL tenant_id` is a legacy/transition state, not an acceptable ownership state for new multi-tenant records. New tenant-aware write paths must require a verified tenant context.
+
 ### `wallets`
 
 Legacy standalone wallets. Encrypted private key fields use AES-256-GCM. Existing records are retained and are not silently converted into HD children.
@@ -105,7 +113,8 @@ This domain exists to reconcile infrastructure custody and tenant-attributed act
 
 ## 6. Current limitations
 
-- No complete tenant registry or tenant-scoped API authentication.
+- Tenant registry and credential-hash schema foundation exists, but no runtime tenant authentication or scope enforcement.
+- No complete tenant-scoped API authorization.
 - `hd_wallets.owner_id` is not enforced.
 - No complete multi-chain asset/transaction schema.
 - No customer monetary reservation ledger (intentionally outside the partner accounting boundary).
