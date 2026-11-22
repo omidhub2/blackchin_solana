@@ -217,7 +217,7 @@ test('0008 adds append-only withdrawal reconciliation evidence without a monetar
     'utf8'
   );
 
-  assert.match(sql, /ALTER TABLE api_idempotency_keys[\\s\\S]*ADD COLUMN IF NOT EXISTS network/i);\n  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_cursors/i);
+  assert.match(sql, /ALTER TABLE api_idempotency_keys[\\s\\S]*ADD COLUMN IF NOT EXISTS network/i);\n  assert.match(sql, /ADD COLUMN IF NOT EXISTS to_public_key/i);\n  assert.match(sql, /ADD COLUMN IF NOT EXISTS amount_lamports/i);\n  assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_cursors/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS withdrawal_reconciliation_events/i);
   assert.match(sql, /REFERENCES api_idempotency_keys\(idempotency_key\) ON DELETE RESTRICT/i);
   assert.match(sql, /CREATE TRIGGER trg_withdrawal_reconciliation_events_immutable\s+BEFORE UPDATE OR DELETE ON withdrawal_reconciliation_events/i);
