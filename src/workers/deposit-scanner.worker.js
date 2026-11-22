@@ -71,6 +71,11 @@ export function createDepositScannerWorker({
     if (lockLost) return;
     lockLost = true;
     lock = null;
+    const lostClient = lockClient;
+    lockClient = null;
+    // Destroy the connection so it cannot be reused by the pool after its
+    // advisory-lock session has become uncertain.
+    if (lostClient) lostClient.release(true);
     log('scanner.lock_lost', { network, scope, message: error?.message ?? 'lock connection ended' });
   }
 
