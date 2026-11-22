@@ -57,6 +57,8 @@ JavaScript memory zeroization is best-effort and cannot guarantee that runtime c
 - Separate partner customer holds from BLACKCHIN operational execution reservations.
 The submit route requires the credential scope `withdrawals:submit`, matching the supported scope registry in `tenant.repository.js`. `withdrawals:write` is not a registered tenant scope and must not be used by this route.
 
+Migration 0012 adds a fail-closed policy data foundation: per-tenant policy limits and freeze state, pending/active/revoked destination allowlist records, credential-bound approval records with immutable request bindings, and append-only policy decision events. No policy row is auto-created for existing tenants; absent policy means disabled. The database schema alone does not authenticate approval issuers or grant the API runtime permission to create approvals/change policy. A separately authenticated control-plane workflow, least-privilege DB grants, atomic velocity reservation/consumption and reviewed policy provider are still required.
+
 Current tenant withdrawal submission is fail-closed: it returns `503 WITHDRAWAL_POLICY_UNAVAILABLE` unless a trusted `tenantWithdrawalPolicy.authorize` provider is injected. The provider must validate the partner approval reference, authenticated tenant credential, destination/asset/network, tenant-specific amount and velocity limits, risk controls and emergency freeze state. The API's approval reference is not proof by itself. Do not grant `withdrawals:write` or expose the route publicly until this provider is implemented, reviewed and tested.
 
 ## 6. Deposit verification
