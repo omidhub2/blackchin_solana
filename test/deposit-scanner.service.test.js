@@ -370,15 +370,21 @@ test('scanner applies confirmation threshold to processed signatures and never r
   assert.equal(inserted[0].status, 'confirming');
   assert.equal(inserted[0].confirmations, 2);
 
+  currentStatus = { confirmationStatus: 'confirmed', confirmations: 2, err: null };
+  const stillPending = await createScanner().scan({ network: 'devnet', scope: 'all' });
+  assert.equal(stillPending.recorded, 1);
+  assert.equal(inserted[1].status, 'confirming');
+  assert.equal(inserted[1].confirmations, 2);
+
   currentStatus = { confirmationStatus: 'processed', confirmations: 3, err: null };
   const thresholdMet = await createScanner().scan({ network: 'devnet', scope: 'all' });
   assert.equal(thresholdMet.recorded, 1);
-  assert.equal(inserted[1].status, 'confirmed');
-  assert.equal(inserted[1].confirmations, 3);
+  assert.equal(inserted[2].status, 'confirmed');
+  assert.equal(inserted[2].confirmations, 3);
 
   currentStatus = { confirmationStatus: 'processed', confirmations: 5, err: { InstructionError: [0, 'Custom'] } };
   const failed = await createScanner().scan({ network: 'devnet', scope: 'all' });
   assert.equal(failed.recorded, 0);
   assert.equal(failed.failed, 1);
-  assert.equal(inserted.length, 2);
+  assert.equal(inserted.length, 3);
 });
