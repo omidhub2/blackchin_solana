@@ -16,7 +16,7 @@ export async function findWalletMetadataByPublicKey(dbOrPublicKey, maybePublicKe
 
   const result = await db.query(
     `
-      SELECT id, public_key, created_at
+      SELECT id, public_key, tenant_id, created_at
       FROM wallets
       WHERE public_key = $1
       LIMIT 1
@@ -30,6 +30,7 @@ export async function findWalletMetadataByPublicKey(dbOrPublicKey, maybePublicKe
   return {
     id: String(row.id),
     publicKey: row.public_key,
+    tenantId: row.tenant_id === null || row.tenant_id === undefined ? null : String(row.tenant_id),
     createdAt: row.created_at
   };
 }
