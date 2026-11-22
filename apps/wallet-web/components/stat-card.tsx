@@ -26,15 +26,15 @@ export function StatCard({
   };
 
   return (
-    <div className="panel panel-hover relative overflow-hidden p-5">
-      <div className={clsx('pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-gradient-to-br blur-2xl', accents[accent])} />
+    <div className="panel panel-hover relative overflow-hidden p-5 md:p-6">
+      <div className={clsx('pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-gradient-to-br opacity-80 blur-3xl', accents[accent])} />
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">{label}</p>
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{value}</p>
-          {hint ? <p className="mt-1 text-[11px] text-slate-500">{hint}</p> : null}
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
+          <p className="mt-3 text-[26px] font-bold tabular-nums tracking-tight text-white md:text-[28px]">{value}</p>
+          {hint ? <p className="mt-2 text-xs text-slate-400">{hint}</p> : null}
         </div>
-        <span className={clsx('rounded-xl border border-white/10 bg-white/[0.03] p-2.5', accents[accent])}>
+        <span className={clsx('rounded-xl border border-white/[0.09] bg-white/[0.045] p-3 shadow-inner', accents[accent])}>
           <Icon size={18} />
         </span>
       </div>
