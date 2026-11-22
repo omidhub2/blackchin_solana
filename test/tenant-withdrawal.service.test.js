@@ -36,6 +36,32 @@ function walletDb({ account = true, parent = true } = {}) {
   };
 }
 
+test('tenant withdrawal history and detail queries always constrain tenant ownership', async () => {
+  const calls = [];
+  const db = {
+    async connect() { throw new Error('connection should not be needed'); },
+    async query(sql, params) {
+      calls.push({ query: String(sql), params });
+      return { rows: [{
+        idempotency_key: 'tenant-withdrawal-key-001', status: 'processing', network: 'devnet',
+        wallet_public_key: SENDER, to_public_key: RECIPIENT, amount_lamports: '1000',
+        transaction_signature: null, approval_reference: 'partner-approval-001',
+        response_json: null, created_at: new Date(), updated_at: new Date()
+      }], rowCount: 1 };
+    }
+  };
+  const service = createTenantWithdrawalService({
+    db, network: 'devnet', cipher: {},
+    rpc: { async estimateTransfer() { return {}; }, async sendSolWithSigner() { throw new Error('unused'); } }
+  });
+  const history = await service.list({ tenantId: '42', limit: 10, offset: 5 });
+  const detail = await service.get({ tenantId: '42', idempotencyKey: 'tenant-withdrawal-key-001' });
+  assert.equal(history.items[0].status, 'processing');
+  assert.equal(detail.idempotencyKey, 'tenant-withdrawal-key-001');
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.query.includes('WHERE tenant_id = $1')));
+  assert.ok(calls.every((call) => call.params[0] === '42'));
+});
 test('tenant withdrawal policy denial happens before idempotency reservation or signing', async () => {
   const db = walletDb();
   let policyCalls = 0;
