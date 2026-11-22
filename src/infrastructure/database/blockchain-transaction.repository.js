@@ -154,7 +154,7 @@ export async function findTransactionBySignature(db, signature, walletPublicKey,
 export async function updateTransactionStatus(
   db,
   id,
-  { status, commitment, slot, blockTime, failureReason, metadata }
+  { status, commitment, slot, blockTime, failureReason, metadata, clearFailureReason = false }
 ) {
   if (!TRANSACTION_STATUSES.includes(status)) {
     throw new TypeError('Invalid transaction status');
@@ -168,7 +168,7 @@ export async function updateTransactionStatus(
         commitment = COALESCE($3, commitment),
         slot = COALESCE($4, slot),
         block_time = COALESCE($5, block_time),
-        failure_reason = COALESCE($6, failure_reason),
+        failure_reason = CASE WHEN $8 THEN NULL ELSE COALESCE($6, failure_reason) END,
         metadata = CASE WHEN $7::jsonb IS NULL THEN metadata ELSE metadata || $7::jsonb END,
         updated_at = NOW()
       WHERE id = $1
@@ -181,7 +181,8 @@ export async function updateTransactionStatus(
       slot ?? null,
       blockTime ?? null,
       failureReason ?? null,
-      metadata ? JSON.stringify(metadata) : null
+      metadata ? JSON.stringify(metadata) : null,
+      clearFailureReason === true
     ]
   );
 
