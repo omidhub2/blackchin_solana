@@ -124,7 +124,7 @@ test('confirmed but not finalized withdrawal stays processing and is not complet
 
   await service.scan();
 
-  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'pending'), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[4] === 'pending'), true);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
 });
 
@@ -134,7 +134,7 @@ test('missing signature status remains unknown and never releases the idempotenc
 
   await service.scan();
 
-  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'unknown'), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[4] === 'unknown'), true);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'failed'")), false);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
 });
@@ -158,7 +158,7 @@ test('finalized but mismatched parsed transfer is put under review', async () =>
 
   await service.scan();
 
-  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'under_review'), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[4] === 'under_review'), true);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
 });
 
@@ -169,7 +169,7 @@ test('old processing row without signature is failed only at the safe pre-broadc
   await service.scan();
 
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'failed'") && x.query.includes('transaction_signature IS NULL')), true);
-  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[3] === 'safe_prebroadcast_failed'), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO withdrawal_reconciliation_events') && x.params?.[4] === 'safe_prebroadcast_failed'), true);
 });
 
 test('RPC errors do not advance the reconciliation cursor', async () => {
@@ -191,7 +191,7 @@ test('finalized transaction with the wrong persisted amount remains under review
 
   assert.equal(h.clientCalls.some((x) =>
     x.query.includes('INSERT INTO withdrawal_reconciliation_events') &&
-    x.params?.[3] === 'under_review'
+    x.params?.[4] === 'under_review'
   ), true);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
 });
