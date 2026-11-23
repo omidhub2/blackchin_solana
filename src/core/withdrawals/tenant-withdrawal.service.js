@@ -194,7 +194,7 @@ export function createTenantWithdrawalService({
         await hotWallets.assertCanSpend({ tenantId, publicKey: fromPublicKey, amountLamports });
       }
 
-      const requestHash = hashTenantWithdrawalRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference });
+      const requestHash = hashTenantWithdrawalRequest({ fromPublicKey, toPublicKey, amountLamports, network, approvalReference });
       const reservation = await reserve({
         tenantId, credentialId, approvalReference, idempotencyKey, requestHash,
         walletPublicKey: fromPublicKey, toPublicKey, amountLamports
