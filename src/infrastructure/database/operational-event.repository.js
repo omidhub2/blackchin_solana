@@ -31,7 +31,11 @@ export const OPERATIONAL_EVENT_TYPES = Object.freeze([
   'webhook_endpoint.rotated',
   'system.health_changed',
   'tenant.created',
-  'tenant.status_changed'
+  'tenant.status_changed',
+  'tenant_withdrawal.policy_configured',
+  'tenant_withdrawal.policy_frozen',
+  'tenant_withdrawal.policy_unfrozen',
+  'tenant_withdrawal.policy_deleted'
 ]);
 
 const EVENT_TYPE_SET = new Set(OPERATIONAL_EVENT_TYPES);

@@ -36,6 +36,7 @@ export default function SecurityPage() {
   const queryClient = useQueryClient();
 
   const [tenantId, setTenantId] = useState('');
+  const [editingPolicyTenantId, setEditingPolicyTenantId] = useState<string | null>(null);
   const [newTenantCode, setNewTenantCode] = useState('');
   const [newTenantName, setNewTenantName] = useState('');
   const [enabled, setEnabled] = useState(false);
@@ -179,6 +180,27 @@ export default function SecurityPage() {
     }),
     onSuccess: refreshPolicyData
   });
+  const updatePolicy = useMutation({
+    mutationFn: () => api.patch<TenantWithdrawalPolicy>(`/tenants/${tenantId}/withdrawal-policy`, {
+      enabled,
+      maxSingleLamports,
+      maxDailyLamports,
+      maxWeeklyLamports,
+      maxDailyCount: Number(maxDailyCount),
+      maxWeeklyCount: Number(maxWeeklyCount)
+    }),
+    onSuccess: refreshPolicyData
+  });
+  const deletePolicy = useMutation({
+    mutationFn: (id: string) => api.delete<{ tenantId: string; deleted: boolean }>(`/tenants/${id}/withdrawal-policy`),
+    onSuccess: async ({ tenantId: deletedTenantId }) => {
+      if (editingPolicyTenantId === deletedTenantId) setEditingPolicyTenantId(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['tenant-withdrawal-policy', deletedTenantId] }),
+        queryClient.invalidateQueries({ queryKey: ['security'] })
+      ]);
+    }
+  });
   const freeze = useMutation({
     mutationFn: () => api.post(`/tenants/${tenantId}/withdrawal-policy/freeze`, { reason: freezeReason }),
     onSuccess: refreshPolicyData
@@ -235,11 +257,43 @@ export default function SecurityPage() {
     { key: 'single', header: t('security.maxSingle'), render: (row) => <span className="mono text-slate-400">{formatSol(row.maxSingleLamports)} SOL</span> },
     { key: 'daily', header: t('security.maxDaily'), render: (row) => <span className="mono text-slate-400">{formatSol(row.maxDailyLamports)} SOL</span> },
     { key: 'version', header: t('security.version'), render: (row) => <span className="mono text-slate-400">v{row.policyVersion}</span> },
-    { key: 'updated', header: t('common.updated'), render: (row) => <span className="text-[11px] text-slate-500">{formatDateTime(row.updatedAt)}</span> }
+    { key: 'updated', header: t('common.updated'), render: (row) => <span className="text-[11px] text-slate-500">{formatDateTime(row.updatedAt)}</span> },
+    {
+      key: 'actions',
+      header: 'Actions',
+      searchable: false,
+      render: (row) => (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary !px-3 !py-1.5 text-xs"
+            onClick={() => {
+              setTenantId(row.tenantId);
+              setEditingPolicyTenantId(row.tenantId);
+            }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn-secondary !border-rose-500/20 !px-3 !py-1.5 text-xs !text-rose-300"
+            disabled={deletePolicy.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete the withdrawal policy for ${row.tenantName}? Pending approvals will be revoked and withdrawals will remain blocked.`)) {
+                deletePolicy.mutate(row.tenantId);
+              }
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )
+    }
   ];
 
-  const mutationError = createTenantMutation.error ?? tenantStatusMutation.error ?? configure.error ?? freeze.error ?? unfreeze.error ??
-    addDestination.error ?? activateDestination.error ?? revokeDestination.error ?? issueApproval.error ?? revokeApproval.error;
+  const mutationError = createTenantMutation.error ?? tenantStatusMutation.error ?? configure.error ?? updatePolicy.error ??
+    deletePolicy.error ?? freeze.error ?? unfreeze.error ?? addDestination.error ?? activateDestination.error ??
+    revokeDestination.error ?? issueApproval.error ?? revokeApproval.error;
 
   return (
     <div className="space-y-6">
@@ -341,6 +395,7 @@ export default function SecurityPage() {
           <div className="w-full max-w-xs">
             <select className={selectClass} value={tenantId} onChange={(event) => {
               setTenantId(event.target.value);
+              setEditingPolicyTenantId(null);
               setApprovalCredentialId('');
               setApprovalWallet('');
               setApprovalDestination('');
@@ -355,51 +410,80 @@ export default function SecurityPage() {
 
         {tenantId ? (
           <>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <Field label={t('security.maxSingle')}>
-                <input className={inputClass} inputMode="numeric" value={maxSingleLamports} onChange={(event) => setMaxSingleLamports(event.target.value)} placeholder="Lamports" />
-              </Field>
-              <Field label={t('security.maxDaily')}>
-                <input className={inputClass} inputMode="numeric" value={maxDailyLamports} onChange={(event) => setMaxDailyLamports(event.target.value)} placeholder="Lamports" />
-              </Field>
-              <Field label={t('security.maxWeekly')}>
-                <input className={inputClass} inputMode="numeric" value={maxWeeklyLamports} onChange={(event) => setMaxWeeklyLamports(event.target.value)} placeholder="Lamports" />
-              </Field>
-              <Field label={t('security.maxDailyCount')}>
-                <input className={inputClass} type="number" min="1" value={maxDailyCount} onChange={(event) => setMaxDailyCount(event.target.value)} />
-              </Field>
-              <Field label={t('security.maxWeeklyCount')}>
-                <input className={inputClass} type="number" min="1" value={maxWeeklyCount} onChange={(event) => setMaxWeeklyCount(event.target.value)} />
-              </Field>
-              <label className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-sm text-slate-300">
-                <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-                {t('security.enablePolicy')}
-              </label>
-            </div>
-            <p className="text-xs text-amber-300/80">{t('security.policyFrozenNote')}</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className="btn-primary" disabled={configure.isPending} onClick={() => configure.mutate()}>
-                {configure.isPending ? t('common.loading') : t('common.save')}
-              </button>
-              {policy.data?.emergencyFrozen ? (
-                <button type="button" className="btn-secondary" disabled={unfreeze.isPending || !policy.data.enabled} onClick={() => unfreeze.mutate()}>
-                  {unfreeze.isPending ? t('common.loading') : t('security.unfreeze')}
-                </button>
-              ) : (
-                <button type="button" className="btn-secondary" disabled={freeze.isPending || !freezeReason.trim()} onClick={() => freeze.mutate()}>
-                  {freeze.isPending ? t('common.loading') : t('security.freeze')}
-                </button>
-              )}
-              {policy.data?.emergencyFrozen && policy.data.freezeReason ? (
-                <span className="text-xs text-amber-300/80">{policy.data.freezeReason}</span>
-              ) : null}
-            </div>
-            {!policy.data?.emergencyFrozen ? (
-              <Field label={t('security.freezeReason')}>
-                <input className={inputClass} value={freezeReason} onChange={(event) => setFreezeReason(event.target.value)} maxLength={500} />
-              </Field>
+            {policy.isLoading ? (
+              <p className="text-xs text-slate-500">{t('common.loading')}</p>
+            ) : policy.isError ? (
+              <p className="text-sm text-rose-300">{policy.error.message}</p>
+            ) : policy.data && editingPolicyTenantId !== tenantId ? (
+              <p className="rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 py-3 text-sm text-slate-400">
+                This tenant already has a withdrawal policy. Edit or delete it from Withdrawal Policies.
+              </p>
+            ) : (
+              <>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label={t('security.maxSingle')}>
+                    <input className={inputClass} inputMode="numeric" value={maxSingleLamports} onChange={(event) => setMaxSingleLamports(event.target.value)} placeholder="Lamports" />
+                  </Field>
+                  <Field label={t('security.maxDaily')}>
+                    <input className={inputClass} inputMode="numeric" value={maxDailyLamports} onChange={(event) => setMaxDailyLamports(event.target.value)} placeholder="Lamports" />
+                  </Field>
+                  <Field label={t('security.maxWeekly')}>
+                    <input className={inputClass} inputMode="numeric" value={maxWeeklyLamports} onChange={(event) => setMaxWeeklyLamports(event.target.value)} placeholder="Lamports" />
+                  </Field>
+                  <Field label={t('security.maxDailyCount')}>
+                    <input className={inputClass} type="number" min="1" value={maxDailyCount} onChange={(event) => setMaxDailyCount(event.target.value)} />
+                  </Field>
+                  <Field label={t('security.maxWeeklyCount')}>
+                    <input className={inputClass} type="number" min="1" value={maxWeeklyCount} onChange={(event) => setMaxWeeklyCount(event.target.value)} />
+                  </Field>
+                  <label className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-sm text-slate-300">
+                    <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+                    {t('security.enablePolicy')}
+                  </label>
+                </div>
+                <p className="text-xs text-amber-300/80">{t('security.policyFrozenNote')}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={configure.isPending || updatePolicy.isPending}
+                    onClick={() => editingPolicyTenantId === tenantId ? updatePolicy.mutate() : configure.mutate()}
+                  >
+                    {configure.isPending || updatePolicy.isPending
+                      ? t('common.loading')
+                      : editingPolicyTenantId === tenantId ? 'Save changes' : t('common.save')}
+                  </button>
+                  {editingPolicyTenantId === tenantId ? (
+                    <button type="button" className="btn-secondary" onClick={() => setEditingPolicyTenantId(null)}>
+                      Cancel
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            )}
+            {policy.data ? (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  {policy.data.emergencyFrozen ? (
+                    <button type="button" className="btn-secondary" disabled={unfreeze.isPending || !policy.data.enabled} onClick={() => unfreeze.mutate()}>
+                      {unfreeze.isPending ? t('common.loading') : t('security.unfreeze')}
+                    </button>
+                  ) : (
+                    <button type="button" className="btn-secondary" disabled={freeze.isPending || !freezeReason.trim()} onClick={() => freeze.mutate()}>
+                      {freeze.isPending ? t('common.loading') : t('security.freeze')}
+                    </button>
+                  )}
+                  {policy.data.emergencyFrozen && policy.data.freezeReason ? (
+                    <span className="text-xs text-amber-300/80">{policy.data.freezeReason}</span>
+                  ) : null}
+                </div>
+                {!policy.data.emergencyFrozen ? (
+                  <Field label={t('security.freezeReason')}>
+                    <input className={inputClass} value={freezeReason} onChange={(event) => setFreezeReason(event.target.value)} maxLength={500} />
+                  </Field>
+                ) : null}
+              </>
             ) : null}
-            {policy.isLoading ? <p className="text-xs text-slate-500">{t('common.loading')}</p> : null}
           </>
         ) : (
           <p className="text-sm text-slate-500">{t('security.selectTenant')}</p>

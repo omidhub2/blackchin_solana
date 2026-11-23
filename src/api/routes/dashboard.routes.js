@@ -319,6 +319,50 @@ export async function dashboardRoutes(app) {
     return result;
   });
 
+  app.patch('/tenants/:tenantId/withdrawal-policy', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, [
+      'enabled', 'maxSingleLamports', 'maxDailyLamports', 'maxWeeklyLamports',
+      'maxDailyCount', 'maxWeeklyCount'
+    ]);
+    if (typeof body.enabled !== 'boolean') {
+      throw badRequest('enabled must be a boolean', 'INVALID_WITHDRAWAL_POLICY');
+    }
+    const result = await services(request).tenantWithdrawalPolicy.updatePolicy({
+      tenantId: parseTenantId(request.params.tenantId),
+      enabled: body.enabled,
+      maxSingleLamports: requireString(String(body.maxSingleLamports ?? ''), 'maxSingleLamports', {
+        min: 1, max: 30, pattern: /^[1-9]\d{0,29}$/
+      }),
+      maxDailyLamports: requireString(String(body.maxDailyLamports ?? ''), 'maxDailyLamports', {
+        min: 1, max: 30, pattern: /^[1-9]\d{0,29}$/
+      }),
+      maxWeeklyLamports: requireString(String(body.maxWeeklyLamports ?? ''), 'maxWeeklyLamports', {
+        min: 1, max: 30, pattern: /^[1-9]\d{0,29}$/
+      }),
+      maxDailyCount: requireSafeInteger(Number(body.maxDailyCount), 'maxDailyCount', { min: 1, max: 1_000_000 }),
+      maxWeeklyCount: requireSafeInteger(Number(body.maxWeeklyCount), 'maxWeeklyCount', { min: 1, max: 1_000_000 }),
+      updatedBy: request.dashboard.user.email
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.policy_configured',
+      tenantId: result.tenantId,
+      payload: { enabled: result.enabled, policyVersion: result.policyVersion, updatedBy: result.updatedBy, edited: true }
+    });
+    return result;
+  });
+
+  app.delete('/tenants/:tenantId/withdrawal-policy', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    return services(request).tenantWithdrawalPolicy.deletePolicy({
+      tenantId: parseTenantId(request.params.tenantId),
+      deletedBy: request.dashboard.user.email
+    });
+  });
+
   app.post('/tenants/:tenantId/withdrawal-policy/freeze', {
     preHandler: [authHook, operatorGuard, mutationLimiter]
   }, async (request) => {
