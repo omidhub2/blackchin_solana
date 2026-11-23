@@ -12,6 +12,7 @@ on:
       - "reliability/phase5-end-to-end"
       - "observability/phase6-production-readiness"
       - "feature/phase6-sweeper-engine"
+      - "integration/all-phases-sweeper-observability"
   pull_request:
     branches:
       - main
