@@ -832,7 +832,7 @@ export async function dashboardRoutes(app) {
 
   app.get('/sweeper/jobs', { preHandler: authHook }, async (request) => ({
     items: await requireSweeper(request).listJobs({
-      tenantId: parseOptionalTenantId(request.query.tenantId),
+      tenantId: request.query.tenantId === undefined ? undefined : parseTenantId(request.query.tenantId),
       limit: parseListLimit(request.query.limit, 50, 200),
       offset: parseListOffset(request.query.offset)
     })
@@ -840,7 +840,7 @@ export async function dashboardRoutes(app) {
 
   app.get('/sweeper/jobs/:id', { preHandler: authHook }, async (request) => {
     const id = requireString(request.params.id, 'id', { max: 19, pattern: /^[1-9]\d*$/ });
-    const tenantId = parseOptionalTenantId(request.query.tenantId);
+    const tenantId = request.query.tenantId === undefined ? undefined : parseTenantId(request.query.tenantId);
     const job = await requireSweeper(request).getJob(id, { tenantId });
     if (!job) throw notFound('Sweep job was not found', 'SWEEP_JOB_NOT_FOUND');
     return { job };
