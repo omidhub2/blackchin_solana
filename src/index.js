@@ -208,6 +208,10 @@ try {
   const { acquireReconciliationLock } = await import('./infrastructure/database/deposit-reconciliation.repository.js');
   const { acquireWithdrawalReconciliationLock } = await import('./infrastructure/database/withdrawal-reconciliation.repository.js');
   const { createHealthService } = await import('./core/health.service.js');
+  const { createMetricsService } = await import('./core/metrics.service.js');
+  const { getOperationalBacklog } = await import('./infrastructure/database/observability.repository.js');
+  const { recordOperationalEventSafe } = await import('./infrastructure/database/operational-event.repository.js');
+  const metrics = createMetricsService();
 
   // Creating services validates ENCRYPTION_KEY and fails closed before the
   // port is opened.
@@ -215,6 +219,39 @@ try {
   const depositWorkerServices = depositWorkerPool
     ? createServices({ db: depositWorkerPool, pool: depositWorkerPool })
     : null;
+
+  const workerAlertCooldown = new Map();
+  const workerLogger = (component) => (message, meta = {}) => {
+    console.log(JSON.stringify({
+      time: new Date().toISOString(),
+      component,
+      message,
+      ...meta
+    }));
+    const critical = message === 'scanner.lock_lost' ||
+      message === 'scanner.lock_error' ||
+      (message === 'scanner.run_failed' && Number(meta.consecutiveFailures ?? 0) >= 3);
+    if (message === 'scanner.run_failed') {
+      metrics.increment('blackchin_worker_failures_total', 1, { worker: component });
+    }
+    metrics.setGauge('blackchin_worker_consecutive_failures', Number(meta.consecutiveFailures ?? 0), {
+      worker: component
+    });
+    if (!critical) return;
+    const last = workerAlertCooldown.get(component) ?? 0;
+    if (Date.now() - last < 60_000) return;
+    workerAlertCooldown.set(component, Date.now());
+    void recordOperationalEventSafe(pool, {
+      eventType: 'system.health_changed',
+      network: scannerNetwork,
+      payload: {
+        component,
+        event: message,
+        code: meta.code ?? null,
+        consecutiveFailures: Number(meta.consecutiveFailures ?? 0)
+      }
+    }).catch(() => {});
+  };
 
   if (webhookDeliveryEnabled) {
     const { createWebhookDeliveryWorker } = await import('./workers/webhook-delivery.worker.js');
@@ -270,24 +307,40 @@ try {
     });
 
     let running = false;
-    const timer = setInterval(async () => {
-      if (running || shuttingDown) return;
+    let stopped = false;
+    let inFlight = null;
+    const timer = setInterval(() => {
+      if (running || shuttingDown || stopped) return;
       running = true;
-      try {
-        await worker.runOnce();
-      } catch (error) {
-        log('webhook.worker_error', { message: error.message });
-      } finally {
-        running = false;
-      }
+      inFlight = worker.runOnce()
+        .catch((error) => {
+          log('webhook.worker_error', { code: error.code ?? 'UNKNOWN' });
+        })
+        .finally(() => {
+          running = false;
+          inFlight = null;
+        });
     }, webhookDeliveryIntervalMs);
     timer.unref?.();
 
     webhookWorker = {
       metrics: worker.metrics,
       runOnce: worker.runOnce,
+      health() {
+        const lastRun = worker.metrics.lastRunAt ? new Date(worker.metrics.lastRunAt).getTime() : null;
+        return {
+          state: stopped ? 'stopped' : 'running',
+          stale: lastRun === null ? false : Date.now() - lastRun > webhookDeliveryIntervalMs * 4,
+          hasLock: true,
+          runs: worker.metrics.runs,
+          failures: worker.metrics.lastError ? 1 : 0,
+          lastSuccessAt: worker.metrics.lastRunAt
+        };
+      },
       async stop() {
         clearInterval(timer);
+        if (inFlight) await inFlight;
+        stopped = true;
       }
     };
     webhookWorkerRef.current = webhookWorker;
@@ -301,7 +354,7 @@ try {
       network: scannerNetwork,
       scope: scannerScope,
       intervalMs: scannerIntervalMs,
-      log: (message, meta) => console.log(JSON.stringify({ time: new Date().toISOString(), message, ...meta }))
+      log: workerLogger('deposit_scanner')
     });
   }
 
@@ -315,11 +368,7 @@ try {
       network: scannerNetwork,
       scope: 'deposit-reconciliation',
       intervalMs: reconciliationIntervalMs,
-      log: (message, meta) => console.log(JSON.stringify({
-        time: new Date().toISOString(),
-        message: message.replace('scanner.', 'deposit_reconciliation.'),
-        ...meta
-      }))
+      log: workerLogger('deposit_reconciliation')
     });
   }
 
@@ -333,33 +382,35 @@ try {
       network: scannerNetwork,
       scope: 'withdrawal-reconciliation',
       intervalMs: withdrawalReconciliationIntervalMs,
-      log: (message, meta) => console.log(JSON.stringify({
-        time: new Date().toISOString(),
-        message: message.replace('scanner.', 'withdrawal_reconciliation.'),
-        ...meta
-      }))
+      log: workerLogger('withdrawal_reconciliation')
     });
   }
 
   const health = createHealthService({
     pool,
+    rpc: services.deps.rpc,
+    rpcRequired: process.env.HEALTH_RPC_REQUIRED !== 'false',
     scanner: worker,
     workerEnabled: scannerEnabled,
     reconciliationWorker,
     reconciliationEnabled,
     withdrawalReconciliationWorker,
     withdrawalReconciliationEnabled,
+    webhookWorker,
+    webhookDeliveryEnabled,
     network: scannerNetwork,
     scope: scannerScope,
     queueDepth: async () => {
       const { countPending } = await import('./infrastructure/database/webhook-outbox.repository.js');
       return countPending(pool);
-    }
+    },
+    backlogStats: () => getOperationalBacklog(pool)
   });
 
   server = buildServer({
     services,
     health,
+    metrics,
     tenantPool,
     tenantContextSigner,
     createTenantServices: (tenantDb) => createTenantRequestServices(services, tenantDb)
