@@ -33,6 +33,14 @@ export const WORDLIST_NAME = 'english';
 
 const SUPPORTED_MNEMONIC_WORDS = new Set([12, 15, 18, 21, 24]);
 
+function zeroizeKeypairMaterial(keypair) {
+  if (!keypair || typeof keypair !== 'object') return;
+  const internal = keypair._keypair;
+  for (const candidate of [keypair.secretKey, internal?.privateKey, internal?.secretKey]) {
+    try { candidate?.fill?.(0); } catch { /* best-effort zeroization */ }
+  }
+}
+
 /**
  * Generate a cryptographically secure BIP39 mnemonic.
  * @param {number} entropyBits 128-256, default 256 (24 words)
@@ -97,7 +105,10 @@ export function mnemonicToHdSeed(mnemonic, passphrase = '') {
     throw new TypeError('BIP39 passphrase must be a string');
   }
 
-  return Buffer.from(mnemonicToSeedSync(normalized, passphrase));
+  const rawSeed = mnemonicToSeedSync(normalized, passphrase);
+  const seed = Buffer.from(rawSeed);
+  rawSeed.fill(0);
+  return seed;
 }
 
 /**
@@ -249,8 +260,6 @@ export function deriveSolanaPublicKey(mnemonic, accountIndex, options) {
       derivationPath: derived.derivationPath
     };
   } finally {
-    if (derived.keypair.secretKey.fill) {
-      derived.keypair.secretKey.fill(0);
-    }
+    zeroizeKeypairMaterial(derived.keypair);
   }
 }
