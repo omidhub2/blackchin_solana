@@ -306,8 +306,11 @@ export function createTenantWithdrawalService({
         walletType: wallet.walletType, hdWalletId: wallet.hdWalletId
       };
 
-      const client = await db.connect();
+      let client;
       try {
+        // Connection acquisition can fail after broadcast just like a SQL
+        // statement; keep it inside the reconciliation-required boundary.
+        client = await db.connect();
         await client.query('BEGIN');
         const existing = await findTransactionBySignatureForTenant(
           client, tenantId, sent.signature, fromPublicKey, 'withdrawal'
@@ -345,14 +348,28 @@ export function createTenantWithdrawalService({
         );
         if (completed.rowCount !== 1) throw new Error('Tenant withdrawal idempotency state changed before completion');
         await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
-        // The chain may already have accepted the transaction. Keep the signed
-        // reservation processing so reconciliation, never a retry, resolves it.
+      } catch (cause) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        // The chain may already have accepted the transaction. Never surface
+        // a normal success or permit a new send while durable completion is
+        // ambiguous; reconciliation owns this persisted signature.
+        const error = new Error(
+          'Tenant withdrawal may have been broadcast, but durable ledger completion failed. Do not retry with a new key; reconciliation must resolve the persisted signature.',
+          { cause }
+        );
+        error.statusCode = 503;
         error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+        error.signature = sent.signature;
+        error.idempotencyKey = idempotencyKey;
+        log('withdrawal.reconciliation_required', {
+          tenantId,
+          idempotencyKey,
+          signature: sent.signature,
+          code: cause.code ?? 'DB_COMMIT_ERROR'
+        });
         throw error;
       } finally {
-        client.release();
+        client?.release();
       }
 
       await emitEventSafe(db, {
