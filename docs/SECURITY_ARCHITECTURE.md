@@ -69,6 +69,9 @@ signing should fail closed until a reviewed signer boundary is deployed.
 
 The dashboard control plane issues approvals only for active tenant credentials
 with `withdrawals:submit`, active HD child wallets and active destinations.
+Partners may issue their own approval through the tenant API only when the same
+credential has both `withdrawals:approve` and `withdrawals:submit`; a stable
+`Idempotency-Key` makes issuance replay-safe.
 Approvals bind the exact lamport amount, wallet, destination, network, asset and
 canonical request hash; they expire within 15 minutes. Destination activation
 requires a second admin. Policy edits freeze withdrawals and revoke unused
