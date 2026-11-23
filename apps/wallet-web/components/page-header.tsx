@@ -16,7 +16,7 @@ export function PageHeader({
           <span aria-hidden="true" className="me-3 inline-block h-7 w-1 shrink-0 rounded-full bg-gradient-to-b from-cyan-300 to-violet-500 shadow-[0_0_18px_rgba(34,211,238,0.25)]" />
           <span>{title}</span>
         </h1>
-        {subtitle ? <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">{subtitle}</p> : null}
+        {subtitle ? <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-400">{subtitle}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] p-1.5">{actions}</div> : null}
     </div>
