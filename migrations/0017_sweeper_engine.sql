@@ -138,15 +138,18 @@ CREATE TABLE IF NOT EXISTS sweeper_worker_cursors (
 );
 
 CREATE TABLE IF NOT EXISTS sweep_funding_daily_usage (
+    id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT,
     network VARCHAR(32) NOT NULL CHECK (network IN ('devnet', 'testnet', 'mainnet-beta')),
     funding_wallet_public_key VARCHAR(64) NOT NULL,
     usage_date DATE NOT NULL,
     total_lamports NUMERIC(30, 0) NOT NULL DEFAULT 0 CHECK (total_lamports >= 0),
     transfer_count INTEGER NOT NULL DEFAULT 0 CHECK (transfer_count >= 0),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (tenant_id, network, funding_wallet_public_key, usage_date)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sweep_funding_daily_scope
+    ON sweep_funding_daily_usage(COALESCE(tenant_id, 0), network, funding_wallet_public_key, usage_date);
 
 -- Sweeper signing is deliberately more privileged than deposit scanning:
 -- it can read encrypted HD root material, but cannot read legacy private-key
