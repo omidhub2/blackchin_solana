@@ -214,26 +214,68 @@ export function createSweeperService({
         if (!signaturePersisted || sent.signature === undefined) {
           throw new Error('Sweep broadcast returned without a durably persisted signature');
         }
-        const completed = await db.query(
-          `UPDATE sweep_jobs
-              SET status = 'completed', updated_at = NOW()
-            WHERE id = $1 AND status = 'submitted' AND transaction_signature = $2
-            RETURNING *`,
-          [job.id, sent.signature]
-        );
-        if (completed.rowCount !== 1) {
-          const error = new Error('Sweep may have been broadcast but its durable completion update failed');
+        const client = await db.connect();
+        let completedRow;
+        try {
+          await client.query('BEGIN');
+          const existing = await findTransactionBySignature(
+            client, sent.signature, job.source_public_key, 'sweep'
+          );
+          if (existing && (
+            existing.amountLamports !== amount.toString() ||
+            existing.counterparty !== job.destination_public_key ||
+            existing.network !== network ||
+            existing.idempotencyKey !== job.idempotency_key ||
+            existing.tenantId !== tenantId
+          )) {
+            throw new Error('Existing sweep ledger record conflicts with the submitted transaction');
+          }
+          if (!existing) {
+            const ledger = await insertBlockchainTransaction(client, {
+              signature: sent.signature,
+              direction: 'sweep',
+              walletPublicKey: job.source_public_key,
+              hdWalletId: job.hd_wallet_id,
+              counterparty: job.destination_public_key,
+              amountLamports: amount.toString(),
+              feeLamports: sent.feeLamports ?? null,
+              network,
+              commitment: sent.confirmationStatus ?? commitment,
+              status: 'confirmed',
+              slot: sent.slot ?? null,
+              idempotencyKey: job.idempotency_key,
+              tenantId,
+              metadata: { sweepJobId: String(job.id), assetType: 'sol' }
+            });
+            if (!ledger.created) throw new Error('Sweep ledger identity exists outside the expected scope');
+          }
+          const completed = await client.query(
+            `UPDATE sweep_jobs
+                SET status = 'completed', updated_at = NOW()
+              WHERE id = $1 AND status = 'submitted' AND transaction_signature = $2
+              RETURNING *`,
+            [job.id, sent.signature]
+          );
+          if (completed.rowCount !== 1) throw new Error('Sweep job state changed before completion');
+          await recordSweepEvent(client, {
+            jobId: job.id, tenantId, network,
+            outcome: 'completed', signature: sent.signature,
+            details: { amountLamports: amount.toString(), feeLamports: sent.feeLamports ?? null }
+          });
+          await client.query('COMMIT');
+          completedRow = completed.rows[0];
+        } catch (cause) {
+          await client.query('ROLLBACK').catch(() => {});
+          const error = new Error('Sweep may have been broadcast but durable ledger completion failed', { cause });
           error.code = 'SWEEP_RECONCILIATION_REQUIRED';
+          error.statusCode = 503;
           error.signature = sent.signature;
           throw error;
+        } finally {
+          client.release();
         }
-        await recordSweepEvent(db, {
-          jobId: job.id, tenantId, network,
-          outcome: 'completed', signature: sent.signature,
-          details: { amountLamports: amount.toString(), feeLamports: sent.feeLamports ?? null }
-        });
         log('sweep.completed', { jobId: String(job.id), signature: sent.signature, network });
-        return { replayed: false, job: mapJob(completed.rows[0]), transfer: sent };
+        return { replayed: false, job: mapJob(completedRow), transfer: sent };
       } catch (cause) {
         if (signaturePersisted) {
           const error = new Error('Sweep signature was persisted; do not create a replacement job until reconciliation verifies the chain outcome', { cause });
@@ -259,6 +301,40 @@ export function createSweeperService({
         throw cause;
       }
     },
+
+    async scan({ limit = 100 } = {}) {
+      const candidates = await listSweepCandidates(db, network, { limit });
+      const metrics = { candidates: candidates.length, planned: 0, dust: 0, executed: 0, failed: 0 };
+      for (const candidate of candidates) {
+        const tenantId = candidate.tenant_id === null ? null : String(candidate.tenant_id);
+        try {
+          const planned = await this.planSolSweep({
+            tenantId,
+            sourcePublicKey: candidate.public_key
+          });
+          if (planned.job.status === 'skipped_dust') {
+            metrics.dust += 1;
+            continue;
+          }
+          metrics.planned += Number(planned.created);
+          if (candidate.execution_enabled === true) {
+            await this.executeSolSweep({ jobId: planned.job.id, tenantId });
+            metrics.executed += 1;
+          }
+        } catch (error) {
+          metrics.failed += 1;
+          log('sweep.candidate_failed', {
+            sourcePublicKey: candidate.public_key,
+            tenantId,
+            code: error.code ?? 'UNKNOWN',
+            message: String(error.message ?? 'unknown error').slice(0, 300)
+          });
+        }
+      }
+      return metrics;
+    },
+
+    metrics: { candidates: 0, planned: 0, dust: 0, executed: 0, failed: 0 },
 
     async getJob(jobId, { tenantId } = {}) {
       tenantId = tenantId === undefined ? undefined : assertTenantId(tenantId);
