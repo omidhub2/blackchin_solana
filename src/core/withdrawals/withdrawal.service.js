@@ -343,8 +343,15 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {});
-        error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
-        throw error;
+        // Broadcast already succeeded and the signature was persisted before
+        // it. Preserve the real chain result for the caller, but leave the
+        // reservation processing so reconciliation—not a new send—resolves
+        // the failed atomic ledger/completion commit.
+        console.error('[WITHDRAWAL RECONCILIATION REQUIRED]', {
+          idempotencyKey,
+          signature: sent.signature,
+          message: error.message
+        });
       } finally {
         client.release();
       }
