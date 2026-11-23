@@ -10,11 +10,24 @@
  */
 import crypto from 'node:crypto';
 
+export function solToLamports(amountSol) {
+  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(amountSol)) {
+    throw new TypeError('amountSol must be a decimal string with at most 9 decimal places');
+  }
+  const [whole, fraction = ''] = amountSol.split('.');
+  const value = BigInt(whole) * 1_000_000_000n +
+    BigInt((fraction + '000000000').slice(0, 9));
+  if (value <= 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError('amountSol is outside the supported transfer range');
+  }
+  return value.toString();
+}
+
 export function hashTenantWithdrawalRequest({
-  fromPublicKey, toPublicKey, amountSol, network, approvalReference
+  fromPublicKey, toPublicKey, amountLamports, network, approvalReference
 }) {
   return crypto.createHash('sha256')
-    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountSol, network, approvalReference }))
+    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountLamports, network, approvalReference }))
     .digest('hex');
 }
 
