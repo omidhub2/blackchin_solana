@@ -73,6 +73,8 @@ export function createHealthService({
   withdrawalReconciliationEnabled = false,
   webhookWorker = null,
   webhookDeliveryEnabled = false,
+  sweeperWorker = null,
+  sweeperEnabled = false,
   network,
   scope,
   queueDepth = null,
@@ -99,7 +101,8 @@ export function createHealthService({
         scanner: workerEnabled ? 'unknown' : 'disabled',
         reconciliation: reconciliationEnabled ? 'unknown' : 'disabled',
         withdrawalReconciliation: withdrawalReconciliationEnabled ? 'unknown' : 'disabled',
-        webhookDelivery: webhookDeliveryEnabled ? 'unknown' : 'disabled'
+        webhookDelivery: webhookDeliveryEnabled ? 'unknown' : 'disabled',
+        sweeper: sweeperEnabled ? 'unknown' : 'disabled'
       };
       const degraded = [];
       let ready = true;
@@ -167,7 +170,8 @@ export function createHealthService({
         ['scanner', workerEnabled, scanner],
         ['reconciliation', reconciliationEnabled, reconciliationWorker],
         ['withdrawalReconciliation', withdrawalReconciliationEnabled, withdrawalReconciliationWorker],
-        ['webhookDelivery', webhookDeliveryEnabled, webhookWorker]
+        ['webhookDelivery', webhookDeliveryEnabled, webhookWorker],
+        ['sweeper', sweeperEnabled, sweeperWorker]
       ];
       const workers = {};
       for (const [name, enabled, worker] of workerChecks) {
