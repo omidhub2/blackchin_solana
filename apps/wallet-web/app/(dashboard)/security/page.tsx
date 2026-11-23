@@ -380,8 +380,9 @@ export default function SecurityPage() {
             </Field>
           </div>
           <button type="button" className="btn-primary" disabled={
-            issueApproval.isPending || !approvalCredentialId || !approvalWallet ||
-            !approvalDestination || !approvalReference.trim() || !approvalAmountSol.trim()
+            issueApproval.isPending || !policy.data?.enabled || policy.data.emergencyFrozen ||
+            !approvalCredentialId || !approvalWallet || !approvalDestination ||
+            !approvalReference.trim() || !approvalAmountSol.trim()
           } onClick={() => issueApproval.mutate()}>
             {issueApproval.isPending ? t('common.loading') : t('security.issueApproval')}
           </button>
