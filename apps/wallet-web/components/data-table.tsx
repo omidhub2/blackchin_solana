@@ -77,7 +77,7 @@ export function DataTable<T>({
                   setPage(0);
                 }}
                 placeholder={t('common.search')}
-                className="input !border-white/[0.09] !bg-ink-950/80 !py-2.5 ps-9 text-xs"
+                className="input !border-white/[0.09] !bg-ink-950/80 !py-2.5 ps-9 text-sm"
               />
             </div>
           ) : <span />}
@@ -116,7 +116,7 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3 border-t border-white/[0.08] bg-white/[0.02] px-5 py-4 text-xs text-slate-400">
+      <div className="flex items-center justify-between gap-3 border-t border-white/[0.08] bg-white/[0.02] px-5 py-4 text-sm text-slate-400">
         <span>
           {filtered.length === 0 ? 0 : safePage * pageSize + 1}–{Math.min(filtered.length, (safePage + 1) * pageSize)} / {filtered.length}
         </span>
