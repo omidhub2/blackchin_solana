@@ -123,11 +123,16 @@ export default function SecurityPage() {
     if (!approvalCredentialId && tenantCredentials[0]) setApprovalCredentialId(tenantCredentials[0].id);
   }, [approvalCredentialId, tenantCredentials]);
   useEffect(() => {
-    if (!approvalWallet && activeWallets[0]) setApprovalWallet(activeWallets[0].publicKey);
+    if (!activeWallets.some((wallet) => wallet.publicKey === approvalWallet)) {
+      setApprovalWallet(activeWallets[0]?.publicKey ?? '');
+    }
   }, [approvalWallet, activeWallets]);
   useEffect(() => {
-    if (!approvalDestination && activeDestinations[0]) setApprovalDestination(activeDestinations[0].destinationPublicKey);
-  }, [approvalDestination, activeDestinations]);
+    const matchingDestinations = activeDestinations.filter((destination) => destination.network === network);
+    if (!matchingDestinations.some((destination) => destination.destinationPublicKey === approvalDestination)) {
+      setApprovalDestination(matchingDestinations[0]?.destinationPublicKey ?? '');
+    }
+  }, [approvalDestination, activeDestinations, network]);
 
   const refreshPolicyData = async () => {
     await Promise.all([
