@@ -200,13 +200,20 @@ export async function assertTenantRuntimeRole(tenantDb) {
     throw new TypeError('TENANT_DATABASE_URL must configure a tenant runtime pool');
   }
   const result = await tenantDb.query(
-    `SELECT current_user AS role_name, r.rolsuper, r.rolbypassrls,
+    `SELECT current_user AS role_name,
+            login_role.rolsuper AS login_superuser,
+            login_role.rolbypassrls AS login_bypass_rls,
+            runtime_role.rolsuper AS runtime_superuser,
+            runtime_role.rolbypassrls AS runtime_bypass_rls,
             pg_has_role(current_user, 'blackchin_tenant_runtime', 'member') AS has_runtime_role
-       FROM pg_roles r
-      WHERE r.rolname = current_user`
+       FROM pg_roles login_role
+       CROSS JOIN pg_roles runtime_role
+      WHERE login_role.rolname = current_user
+        AND runtime_role.rolname = 'blackchin_tenant_runtime'`
   );
   const role = result.rows[0];
-  if (!role || role.rolsuper || role.rolbypassrls || !role.has_runtime_role) {
+  if (!role || role.login_superuser || role.login_bypass_rls ||
+      role.runtime_superuser || role.runtime_bypass_rls || !role.has_runtime_role) {
     const error = new Error('TENANT_DATABASE_URL must use a non-superuser, non-BYPASSRLS member of blackchin_tenant_runtime');
     error.code = 'TENANT_DATABASE_ROLE_UNSAFE';
     throw error;
