@@ -376,7 +376,8 @@ export function createDepositService({ db, rpc, network, commitment, log = () =>
             network,
             walletPublicKey: publicKey,
             hdWalletId,
-            payload: eventPayload
+            payload: eventPayload,
+            returnMinimal: true
           });
           await recordOperationalEvent(client, {
             eventType,
@@ -389,7 +390,8 @@ export function createDepositService({ db, rpc, network, commitment, log = () =>
               amountLamports: String(lamports),
               status,
               slot
-            }
+            },
+            returnMinimal: true
           });
         }
 
