@@ -315,7 +315,10 @@ export function createTenantWithdrawalService({
         if (existing && (
           existing.amountLamports !== sent.amountLamports ||
           existing.counterparty !== toPublicKey ||
-          ['failed', 'rejected'].includes(existing.status)
+          existing.network !== network ||
+          existing.idempotencyKey !== idempotencyKey ||
+          existing.hdWalletId !== (wallet.hdWalletId ?? null) ||
+          !['confirmed', 'credited'].includes(existing.status)
         )) {
           throw new Error('Existing tenant withdrawal ledger row conflicts with the confirmed transaction');
         }
