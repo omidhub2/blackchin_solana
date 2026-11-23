@@ -44,7 +44,8 @@ Not allowed:
 | 0010 | Tenant attribution for withdrawal reconciliation evidence |
 | 0011 | Tenant-scoped idempotency namespace and credential/approval binding |
 | 0012 | Fail-closed withdrawal policy, destination allowlist, approvals, policy audit |
-| 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |\n| 0014 | HMAC-verified tenant context, restricted runtime role and PostgreSQL row-level policies |
+| 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |
+| 0014 | HMAC-verified tenant context, restricted runtime role and PostgreSQL row-level policies |
 
 Migrations are forward-only and checksum-verified. Never edit an applied
 migration.
