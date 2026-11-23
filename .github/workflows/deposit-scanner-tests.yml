@@ -79,7 +79,7 @@ jobs:
                   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
               END IF;
             END
-            $;
+            $block$;
           `);
           await pool.query('GRANT blackchin_tenant_runtime TO blackchin_ci_tenant');
           await pool.end();
