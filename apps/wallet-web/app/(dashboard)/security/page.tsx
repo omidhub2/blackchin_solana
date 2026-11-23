@@ -395,6 +395,7 @@ export default function SecurityPage() {
           <div className="w-full max-w-xs">
             <select className={selectClass} value={tenantId} onChange={(event) => {
               setTenantId(event.target.value);
+              setEditingPolicyTenantId(null);
               setApprovalCredentialId('');
               setApprovalWallet('');
               setApprovalDestination('');
@@ -409,51 +410,78 @@ export default function SecurityPage() {
 
         {tenantId ? (
           <>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <Field label={t('security.maxSingle')}>
-                <input className={inputClass} inputMode="numeric" value={maxSingleLamports} onChange={(event) => setMaxSingleLamports(event.target.value)} placeholder="Lamports" />
-              </Field>
-              <Field label={t('security.maxDaily')}>
-                <input className={inputClass} inputMode="numeric" value={maxDailyLamports} onChange={(event) => setMaxDailyLamports(event.target.value)} placeholder="Lamports" />
-              </Field>
-              <Field label={t('security.maxWeekly')}>
-                <input className={inputClass} inputMode="numeric" value={maxWeeklyLamports} onChange={(event) => setMaxWeeklyLamports(event.target.value)} placeholder="Lamports" />
-              </Field>
-              <Field label={t('security.maxDailyCount')}>
-                <input className={inputClass} type="number" min="1" value={maxDailyCount} onChange={(event) => setMaxDailyCount(event.target.value)} />
-              </Field>
-              <Field label={t('security.maxWeeklyCount')}>
-                <input className={inputClass} type="number" min="1" value={maxWeeklyCount} onChange={(event) => setMaxWeeklyCount(event.target.value)} />
-              </Field>
-              <label className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-sm text-slate-300">
-                <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-                {t('security.enablePolicy')}
-              </label>
-            </div>
-            <p className="text-xs text-amber-300/80">{t('security.policyFrozenNote')}</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className="btn-primary" disabled={configure.isPending} onClick={() => configure.mutate()}>
-                {configure.isPending ? t('common.loading') : t('common.save')}
-              </button>
-              {policy.data?.emergencyFrozen ? (
-                <button type="button" className="btn-secondary" disabled={unfreeze.isPending || !policy.data.enabled} onClick={() => unfreeze.mutate()}>
-                  {unfreeze.isPending ? t('common.loading') : t('security.unfreeze')}
-                </button>
-              ) : (
-                <button type="button" className="btn-secondary" disabled={freeze.isPending || !freezeReason.trim()} onClick={() => freeze.mutate()}>
-                  {freeze.isPending ? t('common.loading') : t('security.freeze')}
-                </button>
-              )}
-              {policy.data?.emergencyFrozen && policy.data.freezeReason ? (
-                <span className="text-xs text-amber-300/80">{policy.data.freezeReason}</span>
-              ) : null}
-            </div>
-            {!policy.data?.emergencyFrozen ? (
-              <Field label={t('security.freezeReason')}>
-                <input className={inputClass} value={freezeReason} onChange={(event) => setFreezeReason(event.target.value)} maxLength={500} />
-              </Field>
+            {policy.isLoading ? (
+              <p className="text-xs text-slate-500">{t('common.loading')}</p>
+            ) : policy.data && editingPolicyTenantId !== tenantId ? (
+              <p className="rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 py-3 text-sm text-slate-400">
+                This tenant already has a withdrawal policy. Edit or delete it from Withdrawal Policies.
+              </p>
+            ) : (
+              <>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label={t('security.maxSingle')}>
+                    <input className={inputClass} inputMode="numeric" value={maxSingleLamports} onChange={(event) => setMaxSingleLamports(event.target.value)} placeholder="Lamports" />
+                  </Field>
+                  <Field label={t('security.maxDaily')}>
+                    <input className={inputClass} inputMode="numeric" value={maxDailyLamports} onChange={(event) => setMaxDailyLamports(event.target.value)} placeholder="Lamports" />
+                  </Field>
+                  <Field label={t('security.maxWeekly')}>
+                    <input className={inputClass} inputMode="numeric" value={maxWeeklyLamports} onChange={(event) => setMaxWeeklyLamports(event.target.value)} placeholder="Lamports" />
+                  </Field>
+                  <Field label={t('security.maxDailyCount')}>
+                    <input className={inputClass} type="number" min="1" value={maxDailyCount} onChange={(event) => setMaxDailyCount(event.target.value)} />
+                  </Field>
+                  <Field label={t('security.maxWeeklyCount')}>
+                    <input className={inputClass} type="number" min="1" value={maxWeeklyCount} onChange={(event) => setMaxWeeklyCount(event.target.value)} />
+                  </Field>
+                  <label className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3 text-sm text-slate-300">
+                    <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+                    {t('security.enablePolicy')}
+                  </label>
+                </div>
+                <p className="text-xs text-amber-300/80">{t('security.policyFrozenNote')}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={configure.isPending || updatePolicy.isPending}
+                    onClick={() => editingPolicyTenantId === tenantId ? updatePolicy.mutate() : configure.mutate()}
+                  >
+                    {configure.isPending || updatePolicy.isPending
+                      ? t('common.loading')
+                      : editingPolicyTenantId === tenantId ? 'Save changes' : t('common.save')}
+                  </button>
+                  {editingPolicyTenantId === tenantId ? (
+                    <button type="button" className="btn-secondary" onClick={() => setEditingPolicyTenantId(null)}>
+                      Cancel
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            )}
+            {policy.data ? (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  {policy.data.emergencyFrozen ? (
+                    <button type="button" className="btn-secondary" disabled={unfreeze.isPending || !policy.data.enabled} onClick={() => unfreeze.mutate()}>
+                      {unfreeze.isPending ? t('common.loading') : t('security.unfreeze')}
+                    </button>
+                  ) : (
+                    <button type="button" className="btn-secondary" disabled={freeze.isPending || !freezeReason.trim()} onClick={() => freeze.mutate()}>
+                      {freeze.isPending ? t('common.loading') : t('security.freeze')}
+                    </button>
+                  )}
+                  {policy.data.emergencyFrozen && policy.data.freezeReason ? (
+                    <span className="text-xs text-amber-300/80">{policy.data.freezeReason}</span>
+                  ) : null}
+                </div>
+                {!policy.data.emergencyFrozen ? (
+                  <Field label={t('security.freezeReason')}>
+                    <input className={inputClass} value={freezeReason} onChange={(event) => setFreezeReason(event.target.value)} maxLength={500} />
+                  </Field>
+                ) : null}
+              </>
             ) : null}
-            {policy.isLoading ? <p className="text-xs text-slate-500">{t('common.loading')}</p> : null}
           </>
         ) : (
           <p className="text-sm text-slate-500">{t('security.selectTenant')}</p>
