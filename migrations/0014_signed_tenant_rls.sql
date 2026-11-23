@@ -188,11 +188,22 @@ BEGIN
     FOREACH table_name IN ARRAY tenant_tables LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', table_name);
         EXECUTE format(
-            'DROP POLICY IF EXISTS tenant_isolation ON public.%I',
+            'DROP POLICY IF EXISTS tenant_access ON public.%I',
             table_name
         );
         EXECUTE format(
-            'CREATE POLICY tenant_isolation ON public.%I FOR ALL TO blackchin_tenant_runtime USING (tenant_id = private.current_tenant_id()) WITH CHECK (tenant_id = private.current_tenant_id())',
+            'DROP POLICY IF EXISTS tenant_isolation ON public.%I',
+            table_name
+        );
+        -- A permissive policy grants the operation; a restrictive guard is
+        -- ANDed with every permissive policy, so a later broad policy cannot
+        -- accidentally turn cross-tenant access back on.
+        EXECUTE format(
+            'CREATE POLICY tenant_access ON public.%I AS PERMISSIVE FOR ALL TO blackchin_tenant_runtime USING (tenant_id = private.current_tenant_id()) WITH CHECK (tenant_id = private.current_tenant_id())',
+            table_name
+        );
+        EXECUTE format(
+            'CREATE POLICY tenant_isolation ON public.%I AS RESTRICTIVE FOR ALL TO blackchin_tenant_runtime USING (tenant_id = private.current_tenant_id()) WITH CHECK (tenant_id = private.current_tenant_id())',
             table_name
         );
     END LOOP;
