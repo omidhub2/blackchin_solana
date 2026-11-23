@@ -1,0 +1,46 @@
+name: Devnet Live Transaction Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "fix/withdrawal-deposit-safety"
+    paths:
+      - "scripts/devnet-smoke.mjs"
+      - ".github/workflows/devnet-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devnet-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  devnet-transfer:
+    name: Ephemeral wallet airdrop and SOL transfer on Devnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOLANA_NETWORK: devnet
+      SOLANA_RPC_URL: https://api.devnet.solana.com
+      SOLANA_EXPECTED_GENESIS_HASH: GH7ome3EiwEr7tu9JuTh2dpYWBJK3z69Xm1ZE3MEE6JC
+      SOLANA_COMMITMENT: confirmed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run real Devnet transaction smoke test
+        run: node scripts/devnet-smoke.mjs
