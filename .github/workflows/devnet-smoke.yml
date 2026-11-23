@@ -2,6 +2,11 @@ name: Devnet Live Transaction Smoke Test
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "fix/withdrawal-deposit-safety"
+    paths:
+      - "scripts/devnet-smoke.mjs"
 
 permissions:
   contents: read
