@@ -116,7 +116,7 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
     db, rpc, network: 'devnet', commitment: 'confirmed',
     signer, cipher: {}, log() {}
   });
-  return { service, policy, jobs, events, ledger, calls };
+  return { service, rpc, policy, jobs, events, ledger, calls };
 }
 
 test('plans a native SOL sweep after exact fee and retained-balance deductions', async () => {
