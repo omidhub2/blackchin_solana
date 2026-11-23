@@ -176,6 +176,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0015'));
   assert.ok(versions.includes('0016'));
   assert.ok(versions.includes('0017'));
+  assert.ok(versions.includes('0018'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -423,5 +424,20 @@ test('0017 adds partial indexes for bounded production observability backlog que
   assert.match(sql, /idx_deposit_reconciliation_observability_under_review/i);
   assert.match(sql, /idx_withdrawal_reconciliation_observability_under_review/i);
   assert.match(sql, /WHERE status = 'under_review'/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+});
+
+
+test('0018 installs isolated native SOL sweeper policies, jobs and runtime grants', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0018_sweeper_engine.sql'),
+    'utf8'
+  );
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_policies/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_jobs/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_events/i);
+  assert.match(sql, /CREATE ROLE blackchin_sweeper_runtime/i);
+  assert.match(sql, /funding_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.match(sql, /execution_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
