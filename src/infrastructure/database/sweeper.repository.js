@@ -143,3 +143,35 @@ export async function acquireSweeperLock(client, network) {
   };
 }
 
+export async function saveSweepPolicy(db, {
+  tenantId = null, network, destinationPublicKey, enabled = false,
+  executionEnabled = false, minSolSweepLamports = '5000',
+  retainLamports = '10000', maxFeeLamports = '100000',
+  maxSweepsPerWalletDay = 20
+}) {
+  const result = await db.query(
+    `INSERT INTO sweep_policies (
+       tenant_id, network, destination_public_key, enabled, execution_enabled,
+       funding_enabled, funding_wallet_public_key, max_funding_per_sweep_lamports,
+       max_funding_per_day_lamports, min_sol_sweep_lamports,
+       retain_lamports, max_fee_lamports, max_sweeps_per_wallet_day,
+       policy_version
+     ) VALUES ($1,$2,$3,$4,$5,FALSE,NULL,0,0,$6,$7,$8,$9,1)
+     ON CONFLICT (COALESCE(tenant_id, 0), network)
+     DO UPDATE SET
+       destination_public_key = EXCLUDED.destination_public_key,
+       enabled = EXCLUDED.enabled,
+       execution_enabled = EXCLUDED.execution_enabled,
+       min_sol_sweep_lamports = EXCLUDED.min_sol_sweep_lamports,
+       retain_lamports = EXCLUDED.retain_lamports,
+       max_fee_lamports = EXCLUDED.max_fee_lamports,
+       max_sweeps_per_wallet_day = EXCLUDED.max_sweeps_per_wallet_day,
+       policy_version = sweep_policies.policy_version + 1,
+       updated_at = NOW()
+     RETURNING *`,
+    [tenantId, network, destinationPublicKey, enabled, executionEnabled,
+      minSolSweepLamports, retainLamports, maxFeeLamports, maxSweepsPerWalletDay]
+  );
+  return result.rows[0];
+}
+
