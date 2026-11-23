@@ -279,3 +279,70 @@ test('approval issuance is bound to an active destination, active tenant wallet 
   assert.equal(calls.length, 5);
   assert.match(calls[3].query, /c\.scopes @> ARRAY\['withdrawals:submit'\]::text\[\]/);
 });
+
+
+test('partner approval issuance replays the same approval for the same issuer idempotency key', async () => {
+  const prior = {
+    tenant_id: '42', credential_id: '7',
+    approval_reference: REQUEST.approvalReference,
+    request_hash: hashTenantWithdrawalRequest(REQUEST),
+    wallet_public_key: SENDER, destination_public_key: RECIPIENT,
+    network: 'devnet', asset: 'SOL', amount_lamports: '100000000',
+    status: 'approved', issuer: 'tenant_credential:7',
+    issuer_event_id: 'partner-approval-key-001',
+    expires_at: new Date(Date.now() + 60_000), approved_at: new Date()
+  };
+  const calls = [];
+  const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
+    async query(sql, params) {
+      calls.push({ query: String(sql), params });
+      return { rows: [prior], rowCount: 1 };
+    }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  const result = await policy.issueApproval({
+    tenantId: '42', credentialId: '7',
+    approvalReference: REQUEST.approvalReference,
+    requestHash: hashTenantWithdrawalRequest(REQUEST),
+    walletPublicKey: SENDER, destinationPublicKey: RECIPIENT,
+    amountLamports: '100000000', network: 'devnet',
+    expiresAt: new Date(Date.now() + 120_000),
+    issuer: 'tenant_credential:7',
+    issuerEventId: 'partner-approval-key-001',
+    requireApprovalScope: true
+  });
+
+  assert.equal(result.replayed, true);
+  assert.equal(result.issuerEventId, 'partner-approval-key-001');
+  assert.equal(calls.length, 1);
+});
+
+test('partner approval idempotency key cannot be reused for a different binding', async () => {
+  const prior = {
+    tenant_id: '42', credential_id: '7',
+    approval_reference: REQUEST.approvalReference,
+    request_hash: hashTenantWithdrawalRequest(REQUEST),
+    wallet_public_key: SENDER, destination_public_key: RECIPIENT,
+    network: 'devnet', asset: 'SOL', amount_lamports: '100000000',
+    status: 'approved', issuer: 'tenant_credential:7',
+    issuer_event_id: 'partner-approval-key-001',
+    expires_at: new Date(Date.now() + 60_000), approved_at: new Date()
+  };
+  const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
+    async query() { return { rows: [prior], rowCount: 1 }; }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  await assert.rejects(() => policy.issueApproval({
+    tenantId: '42', credentialId: '7',
+    approvalReference: REQUEST.approvalReference,
+    requestHash: hashTenantWithdrawalRequest({ ...REQUEST, amountLamports: '200000000' }),
+    walletPublicKey: SENDER, destinationPublicKey: RECIPIENT,
+    amountLamports: '200000000', network: 'devnet',
+    expiresAt: new Date(Date.now() + 60_000),
+    issuer: 'tenant_credential:7',
+    issuerEventId: 'partner-approval-key-001',
+    requireApprovalScope: true
+  }), (error) => error.statusCode === 409 && error.code === 'WITHDRAWAL_APPROVAL_KEY_REUSED');
+});
