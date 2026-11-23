@@ -155,9 +155,9 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
   const signer = async (_db, _publicKey, callback) => callback({ keypair: { publicKey: SOURCE } });
   const service = createSweeperService({
     db, rpc, network: 'devnet', commitment: 'confirmed',
-    signer, cipher: {}, executionEnabled: true, log() {}
+    signer, cipher: {}, executionEnabled: true, log(event, meta) { logs.push({ event, meta }); }
   });
-  return { service, rpc, policy, jobs, events, ledger, calls };
+  return { service, rpc, policy, jobs, events, ledger, calls, logs };
 }
 
 test('plans a native SOL sweep after exact fee and retained-balance deductions', async () => {
@@ -246,7 +246,7 @@ test('reconciles a submitted sweep only after finalized sender, destination and 
   const result = await h.service.reconcileSubmittedSweeps();
 
   assert.equal(result.checked, 1);
-  assert.equal(result.completed, 1);
+  assert.equal(result.completed, 1, JSON.stringify(h.logs));
   assert.equal(h.jobs.get(plan.job.id).status, 'completed');
   assert.equal(h.ledger.length, 1);
   assert.equal(h.ledger[0].signature, SIGNATURE);
@@ -279,7 +279,7 @@ test('moves a submitted sweep to under_review when finalized transfer details do
 
   const result = await h.service.reconcileSubmittedSweeps();
 
-  assert.equal(result.underReview, 1);
+  assert.equal(result.underReview, 1, JSON.stringify(h.logs));
   assert.equal(h.jobs.get(plan.job.id).status, 'under_review');
   assert.equal(h.ledger.length, 0);
 });
