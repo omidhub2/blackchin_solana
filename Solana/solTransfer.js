@@ -682,6 +682,48 @@ export async function estimateSolTransfer({
 
 
 /**
+ * Estimate a native SOL sweep for an already-authorized HD child wallet.
+ * Unlike the public legacy transfer estimator, this does not query the legacy
+ * wallets table; authorization and key resolution remain the caller's job.
+ */
+export async function estimateSolSweep({ fromPublicKey, toPublicKey, amountLamports, requestedCommitment = defaultCommitment }) {
+  const sender = parsePublicKey(fromPublicKey, 'fromPublicKey');
+  const recipient = parsePublicKey(toPublicKey, 'toPublicKey');
+  const commitmentLevel = validateCommitment(requestedCommitment);
+  if (sender.equals(recipient)) throw new Error('Sweep source and destination must differ');
+  if (typeof amountLamports !== 'string' || !/^\d+$/.test(amountLamports) || BigInt(amountLamports) <= 0n || BigInt(amountLamports) > MAX_SAFE_LAMPORTS) {
+    throw new TypeError('amountLamports must be a positive safe integer string');
+  }
+  const latestBlockhash = await connection.getLatestBlockhash(commitmentLevel);
+  const transaction = new Transaction({
+    feePayer: sender,
+    recentBlockhash: latestBlockhash.blockhash
+  }).add(SystemProgram.transfer({
+    fromPubkey: sender,
+    toPubkey: recipient,
+    lamports: Number(BigInt(amountLamports))
+  }));
+  const feeLamports = await connection.getFeeForMessage(transaction.compileMessage(), commitmentLevel);
+  if (!Number.isSafeInteger(feeLamports) || feeLamports < 0) {
+    throw new Error('Unable to obtain a valid SOL sweep fee estimate');
+  }
+  const balanceLamports = await connection.getBalance(sender, commitmentLevel);
+  if (!Number.isSafeInteger(balanceLamports) || balanceLamports < 0) {
+    throw new Error('RPC returned an invalid SOL sweep balance');
+  }
+  return {
+    network: solanaNetwork,
+    from: sender.toBase58(),
+    to: recipient.toBase58(),
+    amountLamports,
+    estimatedFeeLamports: String(feeLamports),
+    availableLamports: String(balanceLamports),
+    sufficientBalance: BigInt(balanceLamports) >= BigInt(amountLamports) + BigInt(feeLamports),
+    commitment: commitmentLevel
+  };
+}
+
+/**
  * Send native SOL with an externally supplied signing keypair.
  *
  * Used by the HD withdrawal flow: the caller (wallet-signer) derives or
