@@ -55,6 +55,7 @@ function isTransactionCommand(query, command) {
 }
 
 async function applyContext(client, context) {
+  await client.query('SET LOCAL ROLE blackchin_tenant_runtime');
   await client.query(
     `SELECT
        set_config('app.tenant_context', $1, true),
