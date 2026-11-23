@@ -149,8 +149,8 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         error.code = 'TENANT_NOT_FOUND';
         throw error;
       }
-      // A policy change invalidates every unused approval. The policy is
-      // already frozen by the upsert, so a failure here remains fail-closed.
+      // New policies always start frozen. If approval cleanup fails, the
+      // policy remains fail-closed and no withdrawal can use a stale approval.
       await db.query(
         `UPDATE tenant_withdrawal_approvals
             SET status = 'revoked'
