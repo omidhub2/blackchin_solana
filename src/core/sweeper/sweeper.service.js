@@ -83,6 +83,52 @@ export function createSweeperService({
   }
 
   return Object.freeze({
+    async getPolicy({ tenantId = null } = {}) {
+      tenantId = assertTenantId(tenantId);
+      return findSweepPolicy(db, tenantId, network);
+    },
+
+    async configurePolicy(input = {}) {
+      const tenantId = assertTenantId(input.tenantId ?? null);
+      const destinationPublicKey = input.destinationPublicKey;
+      if (typeof destinationPublicKey !== 'string' || !destinationPublicKey.trim()) {
+        throw new TypeError('destinationPublicKey is required');
+      }
+      try {
+        new PublicKey(destinationPublicKey);
+      } catch (cause) {
+        throw new TypeError('destinationPublicKey must be a valid Solana address', { cause });
+      }
+      const enabled = input.enabled === true;
+      const executionEnabled = input.executionEnabled === true;
+      if (executionEnabled && !enabled) {
+        throw conflict('Sweep execution cannot be enabled while the policy is disabled', 'SWEEP_POLICY_INVALID');
+      }
+      // Automated funding is intentionally disabled in Phase 6A. A child
+      // wallet is never topped up by this service.
+      if (input.fundingEnabled === true) {
+        throw conflict('Automatic SOL funding is not implemented in Phase 6A', 'SWEEP_FUNDING_UNAVAILABLE');
+      }
+      const minSolSweepLamports = parseUnsigned(input.minSolSweepLamports ?? '5000', 'minSolSweepLamports');
+      const retainLamports = parseUnsigned(input.retainLamports ?? '10000', 'retainLamports');
+      const maxFeeLamports = parseUnsigned(input.maxFeeLamports ?? '100000', 'maxFeeLamports');
+      if (minSolSweepLamports > MAX_SAFE_LAMPORTS || retainLamports > MAX_SAFE_LAMPORTS || maxFeeLamports > MAX_SAFE_LAMPORTS) {
+        throw new RangeError('Sweep policy lamport values exceed the supported range');
+      }
+      const maxSweepsPerWalletDay = input.maxSweepsPerWalletDay ?? 20;
+      if (!Number.isSafeInteger(maxSweepsPerWalletDay) || maxSweepsPerWalletDay < 1 || maxSweepsPerWalletDay > 10_000) {
+        throw new TypeError('maxSweepsPerWalletDay must be an integer between 1 and 10000');
+      }
+      return saveSweepPolicy(db, {
+        tenantId, network, destinationPublicKey: new PublicKey(destinationPublicKey).toBase58(),
+        enabled, executionEnabled,
+        minSolSweepLamports: minSolSweepLamports.toString(),
+        retainLamports: retainLamports.toString(),
+        maxFeeLamports: maxFeeLamports.toString(),
+        maxSweepsPerWalletDay
+      });
+    },
+
     async planSolSweep({ tenantId = null, sourcePublicKey } = {}) {
       tenantId = assertTenantId(tenantId);
       if (typeof sourcePublicKey !== 'string' || !sourcePublicKey.trim()) {
@@ -110,6 +156,10 @@ export function createSweeperService({
       const fee = parseUnsigned(estimate.estimatedFeeLamports, 'estimatedFeeLamports');
       const retained = parseUnsigned(policy.retain_lamports, 'retain_lamports');
       const minimum = parseUnsigned(policy.min_sol_sweep_lamports, 'min_sol_sweep_lamports');
+      const maximumFee = parseUnsigned(policy.max_fee_lamports, 'max_fee_lamports');
+      if (fee > maximumFee) {
+        throw conflict('Estimated SOL network fee exceeds the configured sweep fee ceiling', 'SWEEP_FEE_LIMIT_EXCEEDED');
+      }
       const available = balance > fee + retained ? balance - fee - retained : 0n;
       const amount = available >= minimum ? available : 0n;
       const slot = await rpc.getSlot(commitment);
