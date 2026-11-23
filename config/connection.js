@@ -173,3 +173,25 @@ export const connection = new Connection(
 export const solanaNetwork = SOLANA_NETWORK;
 export const rpcEndpoint = validatedRpcEndpoint;
 export const commitment = COMMITMENT;
+
+/**
+ * Verify the RPC endpoint's actual cluster before opening the API or workers.
+ * The expected genesis hash is configured separately from the endpoint so a
+ * URL accidentally pointed at another cluster fails closed.
+ */
+export async function assertSolanaNetworkIdentity({
+  rpcConnection = connection,
+  expectedGenesisHash = process.env.SOLANA_EXPECTED_GENESIS_HASH
+} = {}) {
+  if (typeof expectedGenesisHash !== 'string' ||
+      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(expectedGenesisHash)) {
+    throw new Error('SOLANA_EXPECTED_GENESIS_HASH must be configured with the expected cluster genesis hash');
+  }
+  const actualGenesisHash = await rpcConnection.getGenesisHash();
+  if (actualGenesisHash !== expectedGenesisHash) {
+    throw new Error(
+      `Solana RPC cluster mismatch: SOLANA_NETWORK is ${SOLANA_NETWORK}, expected genesis ${expectedGenesisHash}, received ${actualGenesisHash}`
+    );
+  }
+  return { network: SOLANA_NETWORK, genesisHash: actualGenesisHash };
+}
