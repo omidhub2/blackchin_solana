@@ -10,6 +10,14 @@
  */
 import crypto from 'node:crypto';
 
+export function hashTenantWithdrawalRequest({
+  fromPublicKey, toPublicKey, amountSol, network, approvalReference
+}) {
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountSol, network, approvalReference }))
+    .digest('hex');
+}
+
 function assertId(value, name) {
   if ((typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') ||
       !/^[1-9][0-9]*$/.test(String(value))) {
@@ -142,7 +150,7 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
             if (!approval || approval.status !== 'approved' ||
                 new Date(approval.expires_at).getTime() <= Date.now() ||
                 String(approval.credential_id) !== credentialId ||
-                approval.request_hash !== requestHash ||
+                String(approval.request_hash ?? '').trim() !== requestHash ||
                 approval.wallet_public_key !== fromPublicKey ||
                 approval.destination_public_key !== toPublicKey ||
                 approval.network !== network ||
