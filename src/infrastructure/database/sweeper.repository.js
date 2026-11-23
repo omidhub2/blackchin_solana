@@ -175,3 +175,16 @@ export async function saveSweepPolicy(db, {
   return result.rows[0];
 }
 
+export async function countRecentSweepJobs(db, tenantId, sourcePublicKey) {
+  const result = await db.query(
+    `SELECT COUNT(*)::text AS total
+       FROM sweep_jobs
+      WHERE tenant_id IS NOT DISTINCT FROM $1
+        AND source_public_key = $2
+        AND created_at >= date_trunc('day', NOW())
+        AND status IN ('submitted', 'completed', 'under_review')`,
+    [tenantId === null ? null : String(tenantId), sourcePublicKey]
+  );
+  return Number(result.rows[0]?.total ?? 0);
+}
+
