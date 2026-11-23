@@ -194,8 +194,8 @@ test('policy configuration always leaves withdrawals frozen until explicit unfre
 
   assert.equal(result.enabled, true);
   assert.equal(result.emergencyFrozen, true);
-  assert.match(calls[0].query, /emergency_frozen = TRUE/);
-  assert.match(calls[0].query, /policy_version = tenant_withdrawal_policies\.policy_version \+ 1/);
+  assert.match(calls[0].query, /INSERT INTO tenant_withdrawal_policies/);
+  assert.doesNotMatch(calls[0].query, /ON CONFLICT \(tenant_id\) DO UPDATE/);
 });
 
 test('destination activation requires a different second approver', async () => {
@@ -345,4 +345,87 @@ test('partner approval idempotency key cannot be reused for a different binding'
     issuerEventId: 'partner-approval-key-001',
     requireApprovalScope: true
   }), (error) => error.statusCode === 409 && error.code === 'WITHDRAWAL_APPROVAL_KEY_REUSED');
+});
+
+test('policy creation rejects a second policy for the same tenant', async () => {
+  const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
+    async query() {
+      const error = new Error('duplicate key');
+      error.code = '23505';
+      throw error;
+    }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  await assert.rejects(() => policy.configurePolicy({
+    tenantId: '42', enabled: true,
+    maxSingleLamports: '100000000',
+    maxDailyLamports: '500000000',
+    maxWeeklyLamports: '2000000000',
+    maxDailyCount: 5, maxWeeklyCount: 20,
+    updatedBy: 'admin@example.com'
+  }), (error) => error.statusCode === 409 && error.code === 'WITHDRAWAL_POLICY_EXISTS');
+});
+
+test('policy editing updates the existing row, freezes it and revokes outstanding approvals', async () => {
+  const calls = [];
+  const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
+    async query(sql, params) {
+      calls.push({ query: String(sql), params });
+      if (String(sql).includes('UPDATE tenant_withdrawal_policies')) {
+        return { rowCount: 1, rows: [{
+          tenant_id: '42', enabled: true, emergency_frozen: true,
+          freeze_reason: 'Policy changed; explicit unfreeze required',
+          max_single_lamports: params[2], max_daily_lamports: params[3],
+          max_weekly_lamports: params[4], max_daily_count: params[5],
+          max_weekly_count: params[6], policy_version: '2',
+          updated_by: params[7], created_at: new Date(), updated_at: new Date()
+        }] };
+      }
+      return { rowCount: 1, rows: [] };
+    }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  const result = await policy.updatePolicy({
+    tenantId: '42', enabled: true,
+    maxSingleLamports: '100000000',
+    maxDailyLamports: '500000000',
+    maxWeeklyLamports: '2000000000',
+    maxDailyCount: 5, maxWeeklyCount: 20,
+    updatedBy: 'admin@example.com'
+  });
+  assert.equal(result.policyVersion, '2');
+  assert.match(calls[0].query, /UPDATE tenant_withdrawal_policies/);
+  assert.match(calls[0].query, /emergency_frozen = TRUE/);
+  assert.match(calls[1].query, /UPDATE tenant_withdrawal_approvals/);
+});
+
+test('policy deletion locks the row, revokes approvals and writes an audit event in one transaction', async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params) {
+      const query = String(sql);
+      calls.push({ query, params });
+      if (query.includes('SELECT tenant_id FROM tenant_withdrawal_policies')) {
+        return { rowCount: 1, rows: [{ tenant_id: '42' }] };
+      }
+      return { rowCount: 1, rows: [] };
+    },
+    release() { calls.push({ query: 'RELEASE', params: [] }); }
+  };
+  const db = {
+    async connect() { return client; },
+    async query() { throw new Error('pool query should not be used'); }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  const result = await policy.deletePolicy({ tenantId: '42', deletedBy: 'admin@example.com' });
+  assert.deepEqual(result, { tenantId: '42', deleted: true });
+  assert.equal(calls[0].query, 'BEGIN');
+  assert.match(calls[1].query, /FOR UPDATE/);
+  assert.match(calls[2].query, /UPDATE tenant_withdrawal_approvals/);
+  assert.match(calls[3].query, /DELETE FROM tenant_withdrawal_policies/);
+  assert.match(calls[4].query, /INSERT INTO operational_events/);
+  assert.equal(calls[5].query, 'COMMIT');
+  assert.equal(calls.at(-1).query, 'RELEASE');
 });
