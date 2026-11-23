@@ -16,6 +16,7 @@ const CREDENTIAL_SCOPES = new Set([
   'deposits:write',
   'withdrawals:estimate',
   'withdrawals:submit',
+  'withdrawals:approve',
   'transactions:read',
   'webhooks:read',
   'webhooks:write',
