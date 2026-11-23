@@ -150,3 +150,33 @@ test('tenant withdrawal refuses inactive parent wallets before any RPC request',
   );
   assert.equal(rpcCalls, 0);
 });
+
+test('tenant withdrawal maps wallet-level in-flight uniqueness to a conflict without signing', async () => {
+  const db = walletDb();
+  const originalQuery = db.query.bind(db);
+  db.query = async (sql, params) => {
+    if (String(sql).includes('INSERT INTO api_idempotency_keys')) {
+      const error = new Error('duplicate key violates uq_withdrawal_one_processing_per_tenant_wallet');
+      error.code = '23505';
+      error.constraint = 'uq_withdrawal_one_processing_per_tenant_wallet';
+      throw error;
+    }
+    return originalQuery(sql, params);
+  };
+  let signCalls = 0;
+  const service = createTenantWithdrawalService({
+    db, network: 'devnet', commitment: 'confirmed', cipher: {},
+    tenantWithdrawalPolicy: { async authorize() { return true; } },
+    rpc: {
+      async estimateTransfer() { return {}; },
+      async sendSolWithSigner() { signCalls += 1; throw new Error('must not sign'); }
+    }
+  });
+
+  await assert.rejects(() => service.submit({
+    tenantId: '42', credentialId: '1', idempotencyKey: 'tenant-withdrawal-key-002',
+    fromPublicKey: SENDER, toPublicKey: RECIPIENT, amountSol: '0.1',
+    approvalReference: 'partner-approval-002'
+  }), (error) => error.code === 'WALLET_WITHDRAWAL_IN_PROGRESS' && error.statusCode === 409);
+  assert.equal(signCalls, 0);
+});

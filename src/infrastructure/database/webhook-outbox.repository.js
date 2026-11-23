@@ -122,7 +122,8 @@ export async function emitEvent(db, {
   hdWalletId = null,
   payload,
   eventId = crypto.randomUUID(),
-  maxAttempts = 8
+  maxAttempts = 8,
+  returnMinimal = false
 }) {
   if (!WEBHOOK_EVENT_TYPES.includes(eventType)) {
     throw new TypeError(`Unsupported webhook event type: ${eventType}`);
@@ -141,15 +142,18 @@ export async function emitEvent(db, {
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
       ON CONFLICT (event_id) DO NOTHING
-      RETURNING ${OUTBOX_COLUMNS}
+      RETURNING ${returnMinimal ? 'id, event_id' : OUTBOX_COLUMNS}
     `,
     [eventId, eventType, tenantId === null ? null : String(tenantId), walletPublicKey,
       hdWalletId, network, JSON.stringify(payload), maxAttempts]
   );
 
+  const row = result.rows[0];
   return {
     created: result.rowCount === 1,
-    event: mapOutboxRow(result.rows[0])
+    event: returnMinimal
+      ? (row ? { id: String(row.id), eventId: row.event_id } : null)
+      : mapOutboxRow(row)
   };
 }
 

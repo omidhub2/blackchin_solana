@@ -23,7 +23,12 @@ const STATUS_VALUES = ['active', 'disabled', 'archived'];
 export async function tenantWalletRoutes(app) {
   const db = app.services?.deps?.db ?? null;
   const tenantAuth = db && typeof db.query === 'function'
-    ? createTenantAuthHook({ db })
+    ? createTenantAuthHook({
+        db,
+        tenantPool: app.tenantPool,
+        contextSigner: app.tenantContextSigner,
+        createTenantServices: app.createTenantServices
+      })
     : async (_request, reply) => reply.code(503).send({
         error: 'TENANT_API_UNAVAILABLE',
         message: 'Tenant authentication is not configured'

@@ -45,11 +45,56 @@ Not allowed:
 | 0011 | Tenant-scoped idempotency namespace and credential/approval binding |
 | 0012 | Fail-closed withdrawal policy, destination allowlist, approvals, policy audit |
 | 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |
+| 0014 | HMAC-verified tenant context, restricted runtime role and PostgreSQL row-level policies |
+| 0015 | Immutable ledger/idempotency identity, legal state transitions and one in-flight withdrawal per source wallet |
+| 0016 | Least-privilege cross-tenant deposit-worker role with column-level wallet metadata grants |
 
 Migrations are forward-only and checksum-verified. Never edit an applied
 migration.
 
-## 3. Core tables
+## 3. Tenant RLS boundary
+
+Migration 0014 creates the NOLOGIN role `blackchin_tenant_runtime`, a private
+HMAC verification secret and `private.current_tenant_id()`. Tenant-owned
+operational tables use RLS policies whose USING and WITH CHECK predicates
+require the signed tenant context. The function revalidates tenant and
+credential lifecycle state on every statement.
+
+The API's tenant pool must authenticate as a separate non-superuser,
+non-BYPASSRLS login that is granted membership in `blackchin_tenant_runtime`.
+The API executes `SET LOCAL ROLE` and signed context inside each transaction.
+The privileged control-plane pool is used only for authentication, secret
+provisioning and background/administrative work. Never use the control-plane
+pool for tenant service queries.
+
+RLS is enabled, not forced, on purpose: the migration/table owner and
+control-plane workers retain their explicit administrative path. Tenant API
+connections must never use that owner login. Legacy NULL-tenant records remain
+unassigned and invisible to the tenant runtime role.
+
+## 4. Background worker database boundary
+
+Migration 0016 creates `blackchin_deposit_worker_runtime`. The deposit scanner
+and deposit reconciliation use a dedicated `DEPOSIT_WORKER_DATABASE_URL`
+connection pool, never the API/migration pool.
+
+The deployment login must be a non-superuser with `BYPASSRLS` and membership
+in the restricted worker role. BYPASSRLS is needed only because the scanner
+intentionally processes addresses across tenant boundaries; the role itself
+has narrowly scoped grants. It can read public wallet addresses, tenant
+attribution and lifecycle metadata, write verified blockchain transaction
+records, advance scanner/reconciliation cursors, append reconciliation
+evidence, and append deposit webhook/operational events using an id/event-id-only
+return projection. It cannot SELECT event payloads or read the delivery queues.
+
+The worker role is not granted encrypted HD mnemonic, IV or authentication-tag
+columns; tenant credentials; idempotency reservations; dashboard sessions;
+hot-wallet/signing tables; or webhook delivery/update permissions. Startup
+checks role attributes, membership and all required privileges, and verifies
+that encrypted mnemonic columns remain inaccessible. The scanner's wallet
+resolver reads parent status only and does not load encrypted root material.
+
+## 5. Core tables
 
 ### `tenants`
 
@@ -88,7 +133,18 @@ Unique `(signature, wallet_public_key, direction)` makes recording idempotent.
 
 Tenant-scoped withdrawal execution intents. Binds tenant, credential, approval
 reference, request hash, wallet, destination, amount, network and signature.
-`processing` is an execution guard, not a customer balance hold.
+`processing` is an execution guard, not a customer balance hold. Migration
+0015 adds partial unique indexes so only one processing withdrawal can exist
+per source wallet, separately for tenant and legacy ownership. The request
+identity is immutable; the only permitted status transition is from
+`processing` to `completed` or `failed`.
+
+Migration 0015 also installs database triggers that make ledger identity,
+ownership and monetary columns immutable, restrict lifecycle changes to the
+approved state graph, prevent replacement of a persisted transaction signature
+or completed response, and reject unsafe concurrent withdrawals. The migration
+fails before index creation if pre-existing duplicate in-flight reservations
+need reconciliation.
 
 ### Scanner and reconciliation tables
 
@@ -134,7 +190,7 @@ Fail-closed policy limits, allowlist state, credential-bound approvals and
 append-only policy decisions. No policy row is auto-created for existing
 tenants; absence means disabled.
 
-## 4. Integrity rules
+## 6. Integrity rules
 
 1. Tenant-owned records carry a tenant relation; composite foreign keys prevent
    mismatched parents.
@@ -145,8 +201,15 @@ tenants; absence means disabled.
 6. A withdrawal timeout never releases the reservation while broadcast/finality
    is unknown.
 7. No table represents a partner customer available balance.
+8. At most one withdrawal intent may be `processing` per source wallet and
+   ownership domain. A signed/ambiguous intent holds the slot until reconciliation.
+9. Ledger identity and amount fields cannot be rewritten; transaction and
+   idempotency state transitions are checked by PostgreSQL triggers.
+10. The ledger evidence row and completed idempotency response are committed
+    atomically after broadcast. A failed post-broadcast commit leaves the
+    idempotency reservation in `processing` for reconciliation.
 
-## 5. Retention and operations
+## 7. Retention and operations
 
 - Back up with PITR before every migration.
 - Apply migrations with a least-privilege migration role.

@@ -85,7 +85,9 @@ export function createTenantWithdrawalService({
   }
 
   async function reserve({ tenantId, credentialId, approvalReference, idempotencyKey, requestHash, walletPublicKey, toPublicKey, amountLamports }) {
-    const inserted = await db.query(
+    let inserted;
+    try {
+      inserted = await db.query(
       `INSERT INTO api_idempotency_keys
          (tenant_id, tenant_credential_id, approval_reference, idempotency_key,
           request_hash, status, wallet_public_key, operation, network, to_public_key, amount_lamports)
@@ -93,7 +95,17 @@ export function createTenantWithdrawalService({
        ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
        RETURNING id`,
       [tenantId, credentialId, approvalReference, idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
-    );
+      );
+    } catch (error) {
+      if (error?.code === '23505' &&
+          error?.constraint === 'uq_withdrawal_one_processing_per_tenant_wallet') {
+        throw conflict(
+          'Another withdrawal from this tenant wallet is still processing or awaiting reconciliation',
+          'WALLET_WITHDRAWAL_IN_PROGRESS'
+        );
+      }
+      throw error;
+    }
     if (inserted.rowCount === 1) return { reserved: true, id: inserted.rows[0].id };
 
     const existingResult = await db.query(
@@ -294,8 +306,11 @@ export function createTenantWithdrawalService({
         walletType: wallet.walletType, hdWalletId: wallet.hdWalletId
       };
 
-      const client = await db.connect();
+      let client;
       try {
+        // Connection acquisition can fail after broadcast just like a SQL
+        // statement; keep it inside the reconciliation-required boundary.
+        client = await db.connect();
         await client.query('BEGIN');
         const existing = await findTransactionBySignatureForTenant(
           client, tenantId, sent.signature, fromPublicKey, 'withdrawal'
@@ -303,7 +318,10 @@ export function createTenantWithdrawalService({
         if (existing && (
           existing.amountLamports !== sent.amountLamports ||
           existing.counterparty !== toPublicKey ||
-          ['failed', 'rejected'].includes(existing.status)
+          existing.network !== network ||
+          existing.idempotencyKey !== idempotencyKey ||
+          existing.hdWalletId !== (wallet.hdWalletId ?? null) ||
+          !['confirmed', 'credited'].includes(existing.status)
         )) {
           throw new Error('Existing tenant withdrawal ledger row conflicts with the confirmed transaction');
         }
@@ -330,14 +348,28 @@ export function createTenantWithdrawalService({
         );
         if (completed.rowCount !== 1) throw new Error('Tenant withdrawal idempotency state changed before completion');
         await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
-        // The chain may already have accepted the transaction. Keep the signed
-        // reservation processing so reconciliation, never a retry, resolves it.
+      } catch (cause) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        // The chain may already have accepted the transaction. Never surface
+        // a normal success or permit a new send while durable completion is
+        // ambiguous; reconciliation owns this persisted signature.
+        const error = new Error(
+          'Tenant withdrawal may have been broadcast, but durable ledger completion failed. Do not retry with a new key; reconciliation must resolve the persisted signature.',
+          { cause }
+        );
+        error.statusCode = 503;
         error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+        error.signature = sent.signature;
+        error.idempotencyKey = idempotencyKey;
+        log('withdrawal.reconciliation_required', {
+          tenantId,
+          idempotencyKey,
+          signature: sent.signature,
+          code: cause.code ?? 'DB_COMMIT_ERROR'
+        });
         throw error;
       } finally {
-        client.release();
+        client?.release();
       }
 
       await emitEventSafe(db, {

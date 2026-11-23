@@ -25,7 +25,8 @@
     "dashboard:user": "node scripts/create-dashboard-user.js",
     "test:migrations": "node --test test/migrations.test.js",
     "test:withdrawal-reconciliation": "node --test test/withdrawal-reconciliation.service.test.js",
-    "test:dashboard": "node --test test/dashboard-auth.test.js test/hot-wallet.service.test.js test/operational-event.repository.test.js"
+    "test:dashboard": "node --test test/dashboard-auth.test.js test/hot-wallet.service.test.js test/operational-event.repository.test.js",
+    "load:test": "node scripts/http-load.mjs"
   },
   "dependencies": {
     "@scure/bip39": "^2.4.0",

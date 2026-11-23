@@ -354,16 +354,22 @@ export async function resolveDepositWalletForTenant(db, tenantId, publicKey) {
   }
   const account = await findAccountByPublicKeyForTenant(db, tenant, publicKey);
   if (account) {
-    const root = await findHdWalletByIdForTenant(db, tenant, account.hdWalletId);
-    if (!root) return null;
+    // Deposit verification needs only the parent status. Never select the
+    // encrypted mnemonic columns from the HD root in a scanner code path.
+    const rootResult = await db.query(
+      'SELECT status FROM hd_wallets WHERE tenant_id = $1 AND id = $2 LIMIT 1',
+      [tenant, account.hdWalletId]
+    );
+    const parentStatus = rootResult.rows[0]?.status ?? null;
+    if (parentStatus === null) return null;
     return {
       publicKey: account.publicKey,
       walletType: 'hd_child',
       status: account.status,
-      effectiveStatus: account.status === 'active' && root.status === 'active'
+      effectiveStatus: account.status === 'active' && parentStatus === 'active'
         ? 'active'
-        : (account.status === 'active' ? root.status : account.status),
-      parentStatus: root.status,
+        : (account.status === 'active' ? parentStatus : account.status),
+      parentStatus,
       network: account.network,
       hdWalletId: account.hdWalletId,
       accountIndex: account.accountIndex,

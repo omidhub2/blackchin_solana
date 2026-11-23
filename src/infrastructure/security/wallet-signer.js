@@ -133,8 +133,8 @@ export async function loadSigningKeypairLocked(
   const client = await db.connect();
 
   try {
-    await client.query(`SET LOCAL lock_timeout = '${KEY_LOCK_TIMEOUT_MS}'`);
     await client.query('BEGIN');
+    await client.query(`SET LOCAL lock_timeout = '${KEY_LOCK_TIMEOUT_MS}'`);
 
     const { accountRow, parentRow } = await lockRowsForSigning(client, {
       accountId: account.id,

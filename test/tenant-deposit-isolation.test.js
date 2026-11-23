@@ -39,6 +39,12 @@ function makeDb(ownerTenantId) {
       if (sql.includes('FROM wallets') && sql.includes('WHERE tenant_id = $1 AND public_key = $2')) {
         return { rows: [], rowCount: 0 };
       }
+      if (sql.includes('INSERT INTO webhook_outbox')) {
+        return { rows: [{ id: '501', event_id: params[0], event_type: params[1] }], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO operational_events')) {
+        return { rows: [{ id: '601', event_id: params[0], event_type: params[2] }], rowCount: 1 };
+      }
       if (sql.includes('INSERT INTO blockchain_transactions')) {
         inserts.push({ sql, params });
         const row = {
@@ -108,14 +114,11 @@ test('legacy deposit verification cannot target an explicitly tenant-owned addre
   const account = {
     id: '11', hd_wallet_id: '22', public_key: destination, account_index: 0,
     derivation_path: "m/44'/501'/0'/0'", wallet_type: 'hd_child',
-    network: 'devnet', status: 'active'
+    network: 'devnet', status: 'active', tenant_id: '41'
   };
   const root = { id: '22', network: 'devnet', status: 'active' };
   const db = {
     async query(sql) {
-      if (sql.includes('SELECT tenant_id FROM wallet_accounts')) {
-        return { rows: [{ tenant_id: '41' }], rowCount: 1 };
-      }
       if (sql.includes('FROM wallet_accounts WHERE public_key')) {
         return { rows: [account], rowCount: 1 };
       }

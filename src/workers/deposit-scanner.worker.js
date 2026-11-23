@@ -131,22 +131,32 @@ export function createDepositScannerWorker({
       lockLost = false;
       // (Re)acquire ownership. Without it this instance must not scan, so two
       // replicas can never double-process the same cursor.
-      const candidate = await pool.connect();
-
+      let candidate;
       try {
+        candidate = await pool.connect();
         lock = await cursors.acquireScannerLock(candidate, { network, scope });
       } catch (error) {
+        if (candidate) candidate.release(true);
         lock = null;
-        log('scanner.lock_error', { message: error.message });
+        stats.failures += 1;
+        stats.lastErrorAt = new Date(now()).toISOString();
+        stats.lastErrorMessage = error.message;
+        consecutiveFailures += 1;
+        stats.consecutiveFailures = consecutiveFailures;
+        backoffMs = Math.min(maxBackoffMs, Math.max(minBackoffMs, backoffMs * 2));
+        log('scanner.lock_error', {
+          network, scope, code: error.code ?? 'UNKNOWN',
+          message: error.message, backoffMs
+        });
+        return { error: error.code ?? 'LOCK_ERROR' };
       }
 
       if (!lock) {
         candidate.release();
         log('scanner.lock_not_acquired', { network, scope });
 
-        // Keep the worker in the running state. The scheduler that invoked
-        // this run owns the next retry; scheduling here as well would create
-        // duplicate timers, and switching to idle would make every retry skip.
+        // Another replica owns this scanner. This is contention, not a failed
+        // scan; retry on the normal cadence without marking health degraded.
         return { skipped: 'lock_not_acquired' };
       }
 
@@ -162,6 +172,11 @@ export function createDepositScannerWorker({
     try {
       await assertOwnership();
       const summary = await scanner.scan({ network, scope, assertOwnership });
+      if (summary?.stopped === 'transaction_unavailable') {
+        const error = new Error('Solana RPC has not made a scanned transaction available yet');
+        error.code = 'TRANSACTION_UNAVAILABLE';
+        throw error;
+      }
 
       stats.successes += 1;
       stats.lastSuccessAt = stats.lastRunAt;
@@ -276,14 +291,28 @@ export function createDepositScannerWorker({
      * Does not touch the scheduler or the advisory lock.
      */
     async runOnce() {
+      if (inFlight) return inFlight;
       const previous = state;
-      state = 'running';
-
-      try {
-        return await scanner.scan({ network, scope });
-      } finally {
-        state = previous === 'idle' ? 'idle' : previous;
+      if (state === 'stopping' || state === 'stopped') {
+        return { skipped: 'not_running' };
       }
+      state = 'running';
+      inFlight = runOnce()
+        .finally(async () => {
+          inFlight = null;
+          if (previous === 'idle' && state === 'running') {
+            if (lock) {
+              await lock.release().catch(() => {});
+              lock = null;
+            }
+            if (lockClient) {
+              lockClient.release();
+              lockClient = null;
+            }
+            state = 'idle';
+          }
+        });
+      return inFlight;
     },
 
     /**

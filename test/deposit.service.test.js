@@ -38,6 +38,12 @@ function buildDepositHarness() {
       if (sql.includes('FROM hd_wallets WHERE id')) {
         return { rows: params[0] === '9' ? [root] : [], rowCount: params[0] === '9' ? 1 : 0 };
       }
+      if (sql.includes('INSERT INTO webhook_outbox')) {
+        return { rows: [{ id: '501', event_id: params[0], event_type: params[1] }], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO operational_events')) {
+        return { rows: [{ id: '601', event_id: params[0], event_type: params[2] }], rowCount: 1 };
+      }
       if (sql.includes('INSERT INTO blockchain_transactions')) {
         const row = {
           id: String(inserted.length + 1),

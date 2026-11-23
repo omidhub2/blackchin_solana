@@ -24,6 +24,7 @@ import { createDashboardAuthService } from './dashboard/dashboard-auth.service.j
 import { createDashboardService } from './dashboard/dashboard.service.js';
 import { createHotWalletService } from './hot-wallets/hot-wallet.service.js';
 import { createWebhookEndpointService } from './webhooks/webhook-endpoint.service.js';
+import { createSweeperService } from './sweeper/sweeper.service.js';
 import {
   createDepositScanner,
   SCANNER_MAX_BATCH_DEFAULT,
@@ -71,6 +72,11 @@ export function createServices(overrides = {}) {
     cipher,
     log: deps.log ?? (() => {})
   });
+  const sweeper = typeof deps.rpc?.estimateSolSweep === 'function' &&
+    typeof deps.rpc?.sendSolWithSigner === 'function' &&
+    typeof deps.rpc?.getSlot === 'function'
+    ? createSweeperService({ ...deps, db: deps.sweeperDb ?? deps.db, log: deps.log ?? (() => {}) })
+    : null;
 
   const depositService = createDepositService({ ...deps, log: deps.log ?? (() => {}) });
   const withdrawalReconciliation = createWithdrawalReconciliationService({
@@ -111,6 +117,7 @@ export function createServices(overrides = {}) {
     hdWallets: hdWalletService,
     childWallets: childWalletService,
     hotWallets: hotWalletService,
+    sweeper,
     tenantWallets: createTenantWalletService({ ...deps, log: deps.log ?? (() => {}) }),
     tenantWithdrawalPolicy,
     tenantWithdrawals: createTenantWithdrawalService({
@@ -130,5 +137,22 @@ export function createServices(overrides = {}) {
     dashboard,
     dashboardAuth,
     webhookEndpoints
+  });
+}
+
+/**
+ * Build a request-local service graph whose database dependency is the
+ * signed tenant-scoped facade. Never pass the control-plane pool here.
+ */
+export function createTenantRequestServices(baseServices, tenantDb) {
+  if (!baseServices?.deps || !tenantDb ||
+      typeof tenantDb.query !== 'function' || typeof tenantDb.connect !== 'function') {
+    throw new TypeError('Base services and a signed tenant database are required');
+  }
+
+  return createServices({
+    ...baseServices.deps,
+    db: tenantDb,
+    pool: tenantDb
   });
 }

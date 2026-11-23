@@ -20,10 +20,10 @@ import {
   updateTransactionStatusForTenant,
   updateUnassignedTransactionStatus
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
-import { resolveWallet } from '../../infrastructure/security/wallet-signer.js';
+import { findAccountByPublicKey } from '../../infrastructure/database/wallet-account.repository.js';
 import { resolveDepositWalletForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
-import { emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
-import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
+import { emitEvent, emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
+import { recordOperationalEvent, recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
 
 const COMMITMENT_RANK = { detected: 1, confirming: 2, confirmed: 3, credited: 4 };
 
@@ -51,21 +51,50 @@ export function createDepositService({ db, rpc, network, commitment, log = () =>
       return resolveDepositWalletForTenant(db, tenantId, publicKey);
     }
 
-    const wallet = await resolveWallet(db, publicKey);
-    if (!wallet) return null;
+    // Scanner/API deposit verification needs public ownership metadata only.
+    // Do not load encrypted HD mnemonics through the general signing resolver.
+    const account = await findAccountByPublicKey(db, publicKey);
+    if (account) {
+      if (account.tenantId !== null && account.tenantId !== undefined) return null;
+      const parent = await db.query(
+        'SELECT status FROM hd_wallets WHERE id = $1 AND tenant_id IS NULL LIMIT 1',
+        [account.hdWalletId]
+      );
+      const parentStatus = parent.rows[0]?.status ?? null;
+      return {
+        publicKey: account.publicKey,
+        tenantId: null,
+        walletType: 'hd_child',
+        status: account.status,
+        effectiveStatus: account.status === 'active' && parentStatus === 'active'
+          ? 'active'
+          : (account.status === 'active' ? (parentStatus ?? 'missing') : account.status),
+        parentStatus,
+        network: account.network,
+        hdWalletId: account.hdWalletId,
+        accountIndex: account.accountIndex,
+        derivationPath: account.derivationPath
+      };
+    }
 
-    // Legacy/global deposit operations must not read or mutate a wallet that
-    // has an explicit tenant owner. NULL-tenant legacy wallets remain supported.
-    const tenantOwner = await db.query(
-      `SELECT tenant_id FROM wallet_accounts
-       WHERE public_key = $1 AND tenant_id IS NOT NULL
-       UNION ALL
-       SELECT tenant_id FROM wallets
-       WHERE public_key = $1 AND tenant_id IS NOT NULL
-       LIMIT 1`,
+    const legacy = await db.query(
+      'SELECT public_key, tenant_id FROM wallets WHERE public_key = $1 LIMIT 1',
       [publicKey]
     );
-    return tenantOwner.rows.length === 0 ? wallet : null;
+    const row = legacy.rows[0];
+    if (!row || row.tenant_id !== null) return null;
+    return {
+      publicKey: row.public_key,
+      tenantId: null,
+      walletType: 'standalone',
+      status: 'active',
+      effectiveStatus: 'active',
+      parentStatus: null,
+      network: null,
+      hdWalletId: null,
+      accountIndex: null,
+      derivationPath: null
+    };
   }
 
   async function findDeposit(signature, publicKey, tenantId = null) {
@@ -298,38 +327,41 @@ export function createDepositService({ db, rpc, network, commitment, log = () =>
         throw notFound('Deposit address was not found for this tenant', 'WALLET_NOT_FOUND');
       }
 
-      const inserted = await insertBlockchainTransaction(db, {
-        signature,
-        direction: 'deposit',
-        walletPublicKey: publicKey,
-        hdWalletId,
-        counterparty: transfers[0].from,
-        amountLamports: String(lamports),
-        network,
-        commitment: entryCommitment ?? commitment,
-        status,
-        slot,
-        blockTime,
-        tenantId: tenantId === null ? null : String(tenantId),
-        metadata: {
-          transfers,
-          fingerprint,
-          confirmations,
-          confirmationStatus,
-          source: 'deposit-scanner',
-          walletType: hdWalletId ? 'hd_child' : 'standalone'
-        }
-      });
-
-      if (inserted.created) {
-        const confirmed = status === 'confirmed' || status === 'credited';
-        await emitEventSafe(db, {
-          eventType: confirmed ? 'deposit.confirmed' : 'deposit.detected',
-          tenantId,
-          network,
+      // The ledger observation and its durable outbox/dashboard events are
+      // one commit. A crash cannot leave a recorded deposit with no event;
+      // failed outbox persistence rolls the insert back and the cursor retries.
+      const client = typeof db.connect === 'function' ? await db.connect() : db;
+      const ownsTransaction = client !== db;
+      let inserted;
+      try {
+        if (ownsTransaction) await client.query('BEGIN');
+        inserted = await insertBlockchainTransaction(client, {
+          signature,
+          direction: 'deposit',
           walletPublicKey: publicKey,
           hdWalletId,
-          payload: {
+          counterparty: transfers[0].from,
+          amountLamports: String(lamports),
+          network,
+          commitment: entryCommitment ?? commitment,
+          status,
+          slot,
+          blockTime,
+          tenantId: tenantId === null ? null : String(tenantId),
+          metadata: {
+            transfers,
+            fingerprint,
+            confirmations,
+            confirmationStatus,
+            source: 'deposit-scanner',
+            walletType: hdWalletId ? 'hd_child' : 'standalone'
+          }
+        });
+
+        if (inserted.created) {
+          const confirmed = status === 'confirmed' || status === 'credited';
+          const eventType = confirmed ? 'deposit.confirmed' : 'deposit.detected';
+          const eventPayload = {
             signature,
             walletPublicKey: publicKey,
             amountLamports: String(lamports),
@@ -337,21 +369,41 @@ export function createDepositService({ db, rpc, network, commitment, log = () =>
             slot,
             status,
             confirmations
-          }
-        }, log);
-        await recordOperationalEventSafe(db, {
-          eventType: confirmed ? 'deposit.confirmed' : 'deposit.detected',
-          tenantId,
-          network,
-          walletPublicKey: publicKey,
-          hdWalletId,
-          payload: {
-            signature,
-            amountLamports: String(lamports),
-            status,
-            slot
-          }
-        }, log);
+          };
+          await emitEvent(client, {
+            eventType,
+            tenantId,
+            network,
+            walletPublicKey: publicKey,
+            hdWalletId,
+            payload: eventPayload,
+            returnMinimal: true
+          });
+          await recordOperationalEvent(client, {
+            eventType,
+            tenantId,
+            network,
+            walletPublicKey: publicKey,
+            hdWalletId,
+            payload: {
+              signature,
+              amountLamports: String(lamports),
+              status,
+              slot
+            },
+            returnMinimal: true
+          });
+        }
+
+        if (ownsTransaction) await client.query('COMMIT');
+      } catch (error) {
+        if (ownsTransaction) await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        if (ownsTransaction) client.release();
+      }
+
+      if (inserted.created) {
         return inserted;
       }
 

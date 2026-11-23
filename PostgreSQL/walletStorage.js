@@ -121,6 +121,21 @@ validateDatabaseUrl(DATABASE_URL);
 const SOLANA_RPC_ENDPOINT = validateSolanaRpcUrl(SOLANA_RPC_URL);
 const encryptionKey = Buffer.from(ENCRYPTION_KEY_HEX, 'hex');
 
+function positiveIntegerEnv(name, fallback, { min = 1, max = 60_000 } = {}) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+const DATABASE_POOL_MAX = positiveIntegerEnv('DATABASE_POOL_MAX', 5, { min: 1, max: 100 });
+const DATABASE_POOL_MIN = positiveIntegerEnv('DATABASE_POOL_MIN', 0, { min: 0, max: DATABASE_POOL_MAX });
+const DATABASE_POOL_CONNECTION_TIMEOUT_MS = positiveIntegerEnv('DATABASE_POOL_CONNECTION_TIMEOUT_MS', 10_000);
+const DATABASE_POOL_IDLE_TIMEOUT_MS = positiveIntegerEnv('DATABASE_POOL_IDLE_TIMEOUT_MS', 30_000);
+const DATABASE_POOL_STATEMENT_TIMEOUT_MS = positiveIntegerEnv('DATABASE_POOL_STATEMENT_TIMEOUT_MS', 15_000);
+
+
 // ============================================================
 // PostgreSQL connection pool
 // ============================================================
@@ -130,15 +145,15 @@ let poolEndPromise = null;
 
 export const pool = new Pool({
   connectionString: DATABASE_URL,
-  max: 5,
-  min: 0,
-  connectionTimeoutMillis: 30_000,
-  idleTimeoutMillis: 30_000,
+  max: DATABASE_POOL_MAX,
+  min: DATABASE_POOL_MIN,
+  connectionTimeoutMillis: DATABASE_POOL_CONNECTION_TIMEOUT_MS,
+  idleTimeoutMillis: DATABASE_POOL_IDLE_TIMEOUT_MS,
   maxLifetimeSeconds: 1_800,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
   application_name: 'blackchin-wallet-engine',
-  statement_timeout: 15_000
+  statement_timeout: DATABASE_POOL_STATEMENT_TIMEOUT_MS
 });
 
 pool.on('error', (error) => {

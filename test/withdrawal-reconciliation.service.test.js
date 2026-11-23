@@ -24,7 +24,7 @@ function candidate(overrides = {}) {
   };
 }
 
-function harness({ row = candidate(), signatureStatus, parsed, rpcError } = {}) {
+function harness({ row = candidate(), signatureStatus, parsed, rpcError, failCommit = false, failReconciliationEvent = false } = {}) {
   const calls = [];
   const clientCalls = [];
   const db = {
@@ -54,10 +54,12 @@ function harness({ row = candidate(), signatureStatus, parsed, rpcError } = {}) 
         async query(sql, params) {
           const query = String(sql);
           clientCalls.push({ query, params });
+          if (query === 'COMMIT' && failCommit) throw new Error('simulated PostgreSQL commit acknowledgement loss');
           if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(query)) return { rows: [], rowCount: 0 };
           if (query.includes('FROM blockchain_transactions')) return { rows: [], rowCount: 0 };
           if (query.includes('INSERT INTO blockchain_transactions')) return { rows: [], rowCount: 0 };
           if (query.includes('INSERT INTO withdrawal_reconciliation_events')) {
+            if (failReconciliationEvent) throw new Error('simulated reconciliation event write failure');
             return { rows: [{ id: '901', checked_at: new Date() }], rowCount: 1 };
           }
           if (query.includes('UPDATE withdrawal_reconciliation_cursors')) return { rows: [], rowCount: 1 };
@@ -207,4 +209,38 @@ test('finalized transaction with the wrong persisted amount remains under review
     x.params?.[4] === 'under_review'
   ), true);
   assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), false);
+});
+
+
+test('finalized withdrawal commit acknowledgement loss rolls back and leaves cursor retryable', async () => {
+  const h = harness({
+    signatureStatus: { confirmationStatus: 'finalized', err: null, slot: 123 },
+    parsed: parsedTransfer(),
+    failCommit: true
+  });
+  const service = createWithdrawalReconciliationService({ db: h.db, rpc: h.rpc, network: 'devnet' });
+
+  await assert.rejects(() => service.scan(), /simulated PostgreSQL commit acknowledgement loss/);
+
+  assert.equal(h.clientCalls.some((x) => x.query === 'ROLLBACK'), true);
+  assert.equal(h.clientCalls.some((x) => x.query === 'COMMIT'), true);
+  assert.equal(h.calls.some((x) => x.query.includes('UPDATE withdrawal_reconciliation_cursors') && x.query.includes('last_id = $2')), false);
+  assert.equal(h.calls.some((x) => x.query.includes("status = 'error'")), true);
+});
+
+test('reconciliation event write failure rolls back ledger and idempotency completion', async () => {
+  const h = harness({
+    signatureStatus: { confirmationStatus: 'finalized', err: null, slot: 123 },
+    parsed: parsedTransfer(),
+    failReconciliationEvent: true
+  });
+  const service = createWithdrawalReconciliationService({ db: h.db, rpc: h.rpc, network: 'devnet' });
+
+  await assert.rejects(() => service.scan(), /simulated reconciliation event write failure/);
+
+  assert.equal(h.clientCalls.some((x) => x.query.includes('INSERT INTO blockchain_transactions')), true);
+  assert.equal(h.clientCalls.some((x) => x.query.includes("SET status = 'completed'")), true);
+  assert.equal(h.clientCalls.some((x) => x.query === 'ROLLBACK'), true);
+  assert.equal(h.clientCalls.some((x) => x.query === 'COMMIT'), false);
+  assert.equal(h.calls.some((x) => x.query.includes('UPDATE withdrawal_reconciliation_cursors') && x.query.includes('last_id = $2')), false);
 });

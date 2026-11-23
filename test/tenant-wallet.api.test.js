@@ -4,6 +4,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { buildServer } from '../src/api/server.js';
+import { createTenantContextSigner } from '../src/infrastructure/security/tenant-context.js';
+
+
+function buildTenantTestServer(fake) {
+  const tenantPool = {
+    async connect() {
+      return {
+        async query() { return { rows: [], rowCount: 0 }; },
+        release() {}
+      };
+    }
+  };
+  return buildServer({
+    logger: false,
+    services: fake.services,
+    tenantPool,
+    tenantContextSigner: createTenantContextSigner('a'.repeat(64)),
+    createTenantServices: (tenantDb) => ({
+      ...fake.services,
+      deps: { ...fake.services.deps, db: tenantDb }
+    })
+  });
+}
 
 function makeCredentialDb({ tenantId = '41', scopes = ['wallets:read', 'wallets:write', 'addresses:write', 'deposits:read'] } = {}) {
   const apiKey = 'bc_live_test.secret-value';
@@ -15,7 +38,7 @@ function makeCredentialDb({ tenantId = '41', scopes = ['wallets:read', 'wallets:
       }
       if (String(sql).startsWith('SELECT')) {
         return { rowCount: 1, rows: [{
-          credential_id: 'credential-1', tenant_id: tenantId, key_prefix: 'bc_live_test',
+          credential_id: '1', tenant_id: tenantId, key_prefix: 'bc_live_test',
           secret_hash: secretHash, scopes, credential_status: 'active', expires_at: null,
           revoked_at: null, credential_created_at: new Date(), tenant_code: 'tenant-test',
           display_name: 'Tenant Test', tenant_status: 'active', metadata: {},
@@ -60,7 +83,7 @@ function makeServices({ tenantId = '41', scopes } = {}) {
 
 test('tenant wallet API authenticates with tenant key without sending the legacy global key', async () => {
   const fake = makeServices();
-  const app = buildServer({ logger: false, services: fake.services });
+  const app = buildTenantTestServer(fake);
   try {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/hd-wallets',
@@ -77,7 +100,7 @@ test('tenant wallet API authenticates with tenant key without sending the legacy
 
 test('tenant wallet API rejects missing credentials and insufficient scopes', async () => {
   const fake = makeServices({ scopes: ['wallets:read'] });
-  const app = buildServer({ logger: false, services: fake.services });
+  const app = buildTenantTestServer(fake);
   try {
     const missing = await app.inject({ method: 'GET', url: '/api/v1/tenant/hd-wallets/901' });
     assert.equal(missing.statusCode, 401);
@@ -96,7 +119,7 @@ test('tenant wallet API rejects missing credentials and insufficient scopes', as
 
 test('tenant wallet lookup always receives the authenticated tenant id', async () => {
   const fake = makeServices({ tenantId: '77' });
-  const app = buildServer({ logger: false, services: fake.services });
+  const app = buildTenantTestServer(fake);
   try {
     const response = await app.inject({
       method: 'GET', url: '/api/v1/tenant/hd-wallets/901',
@@ -111,7 +134,7 @@ test('tenant wallet lookup always receives the authenticated tenant id', async (
 
 test('tenant deposit history is scoped to the authenticated tenant', async () => {
   const fake = makeServices({ tenantId: '88', scopes: ['deposits:read'] });
-  const app = buildServer({ logger: false, services: fake.services });
+  const app = buildTenantTestServer(fake);
   try {
     const response = await app.inject({
       method: 'GET', url: '/api/v1/tenant/deposits?limit=10&offset=5',
@@ -126,7 +149,7 @@ test('tenant deposit history is scoped to the authenticated tenant', async () =>
 
 test('tenant deposit detail lookup cannot omit authenticated tenant scope', async () => {
   const fake = makeServices({ tenantId: '99', scopes: ['deposits:read'] });
-  const app = buildServer({ logger: false, services: fake.services });
+  const app = buildTenantTestServer(fake);
   try {
     const signature = '5'.repeat(88);
     const response = await app.inject({
@@ -142,7 +165,7 @@ test('tenant deposit detail lookup cannot omit authenticated tenant scope', asyn
 
 test('tenant deposit monitoring is scoped to the authenticated tenant', async () => {
   const fake = makeServices({ tenantId: '123', scopes: ['deposits:read'] });
-  const app = buildServer({ logger: false, services: fake.services });
+  const app = buildTenantTestServer(fake);
   try {
     const response = await app.inject({
       method: 'GET', url: '/api/v1/tenant/monitoring/deposits',

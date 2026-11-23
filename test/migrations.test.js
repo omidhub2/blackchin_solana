@@ -172,6 +172,11 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0011'));
   assert.ok(versions.includes('0012'));
   assert.ok(versions.includes('0013'));
+  assert.ok(versions.includes('0014'));
+  assert.ok(versions.includes('0015'));
+  assert.ok(versions.includes('0016'));
+  assert.ok(versions.includes('0017'));
+  assert.ok(versions.includes('0018'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -335,4 +340,104 @@ test('0013 adds dashboard identity, durable operational events, tenant webhooks 
   assert.match(sql, /prevent_hot_wallet_rebinding/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
   assert.doesNotMatch(sql, /(?:customer|partner)_balance/i);
+});
+
+test('0014 installs signed tenant context validation and restrictive RLS policies', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0014_signed_tenant_rls.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS private\.tenant_context_secrets/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION private\.current_tenant_id\(\)/i);
+  assert.match(sql, /SECURITY DEFINER/i);
+  assert.match(sql, /public\.hmac\(/i);
+  assert.match(sql, /c\.status = 'active'/i);
+  assert.match(sql, /c\.revoked_at IS NULL/i);
+  assert.match(sql, /c\.expires_at IS NULL OR c\.expires_at > statement_timestamp\(\)/i);
+  assert.match(sql, /CREATE ROLE blackchin_tenant_runtime/i);
+  assert.match(sql, /NOSUPERUSER[\s\S]*NOBYPASSRLS/i);
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /AS RESTRICTIVE FOR ALL TO blackchin_tenant_runtime/i);
+  assert.match(sql, /USING \(tenant_id = private\.current_tenant_id\(\)\)/i);
+  assert.match(sql, /WITH CHECK \(tenant_id = private\.current_tenant_id\(\)\)/i);
+  assert.doesNotMatch(sql, /FORCE ROW LEVEL SECURITY/i);
+  assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)[\s\S]*SET tenant_id/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
+
+test('0015 installs immutable ledger/idempotency guards and per-wallet withdrawal serialization', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0015_ledger_atomicity.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /LOCK TABLE public\.api_idempotency_keys IN SHARE ROW EXCLUSIVE MODE/i);
+  assert.match(sql, /wallet_public_key IS NULL/i);
+  assert.match(sql, /uq_withdrawal_one_processing_per_tenant_wallet/i);
+  assert.match(sql, /uq_withdrawal_one_processing_per_legacy_wallet/i);
+  assert.match(sql, /status = 'processing'/i);
+  assert.match(sql, /operation = 'withdrawal'/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION enforce_blockchain_transaction_integrity/i);
+  assert.match(sql, /NEW\.tenant_id IS DISTINCT FROM OLD\.tenant_id/i);
+  assert.match(sql, /NEW\.amount_lamports IS DISTINCT FROM OLD\.amount_lamports/i);
+  assert.match(sql, /Invalid blockchain transaction status transition/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION enforce_idempotency_reservation_integrity/i);
+  assert.match(sql, /NEW\.request_hash IS DISTINCT FROM OLD\.request_hash/i);
+  assert.match(sql, /a transaction signature may only be persisted once while processing/i);
+  assert.match(sql, /Invalid idempotency status transition/i);
+  assert.match(sql, /HAVING COUNT\(\*\) > 1/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
+
+test('0016 grants deposit workers only public wallet metadata and scanner/reconciliation writes', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0016_deposit_worker_runtime.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /blackchin_deposit_worker_runtime/i);
+  assert.match(sql, /GRANT SELECT \(id, public_key, tenant_id, created_at\)/i);
+  assert.match(sql, /GRANT SELECT \(id, tenant_id, status\)/i);
+  assert.match(sql, /GRANT SELECT, INSERT, UPDATE\s+ON public\.blockchain_transactions/i);
+  assert.match(sql, /deposit_scanner_cursors/i);
+  assert.match(sql, /deposit_reconciliation_cursors/i);
+  assert.match(sql, /deposit_reconciliation_events/i);
+  assert.match(sql, /webhook_outbox/i);
+  assert.match(sql, /operational_events/i);
+  assert.match(sql, /GRANT SELECT \(id, event_id\)/i);
+  assert.match(sql, /GRANT INSERT\s+ON public\.webhook_outbox, public\.operational_events/i);
+  assert.doesNotMatch(sql, /GRANT SELECT, INSERT\s+ON public\.webhook_outbox/i);
+  assert.doesNotMatch(sql, /mnemonic_encrypted|mnemonic_iv|mnemonic_auth_tag/i);
+  assert.doesNotMatch(sql, /GRANT .* ON public\.(tenants|tenant_api_credentials|api_idempotency_keys|hot_wallets)/i);
+});
+
+
+test('0017 adds partial indexes for bounded production observability backlog queries', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0017_observability_indexes.sql'),
+    'utf8'
+  );
+  assert.match(sql, /idx_webhook_outbox_observability_pending/i);
+  assert.match(sql, /idx_api_idempotency_observability_signed_withdrawals/i);
+  assert.match(sql, /idx_blockchain_transactions_observability_under_review/i);
+  assert.match(sql, /idx_deposit_reconciliation_observability_under_review/i);
+  assert.match(sql, /idx_withdrawal_reconciliation_observability_under_review/i);
+  assert.match(sql, /WHERE status = 'under_review'/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
+});
+
+
+test('0018 installs isolated native SOL sweeper policies, jobs and runtime grants', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0018_sweeper_engine.sql'),
+    'utf8'
+  );
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_policies/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_jobs/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_events/i);
+  assert.match(sql, /CREATE ROLE blackchin_sweeper_runtime/i);
+  assert.match(sql, /funding_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.match(sql, /execution_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
