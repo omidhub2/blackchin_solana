@@ -187,11 +187,14 @@ async function confirmWithBlockhashWindow({
   commitmentLevel
 }) {
   let blockHeightTimer;
+  let confirmationTimeout;
+  let blockHeightCheckInFlight = false;
   let settled = false;
 
   const expired = new Promise((_resolve, reject) => {
     blockHeightTimer = setInterval(async () => {
-      if (settled) return;
+      if (settled || blockHeightCheckInFlight) return;
+      blockHeightCheckInFlight = true;
 
       try {
         const { value: blockHeight } = await connection.getBlockHeight(commitmentLevel);
@@ -208,13 +211,15 @@ async function confirmWithBlockhashWindow({
         }
       } catch {
         // Transient RPC errors are ignored while the blockhash is still valid.
+      } finally {
+        blockHeightCheckInFlight = false;
       }
     }, BLOCKHASH_WINDOW_CHECK_MS);
     blockHeightTimer.unref?.();
   });
 
   const timeout = new Promise((_resolve, reject) => {
-    const timer = setTimeout(() => {
+    confirmationTimeout = setTimeout(() => {
       const error = new Error(
         `Transaction ${signature} confirmation exceeded ${MAX_BLOCKHASH_WAIT_MS} ms`
       );
@@ -241,6 +246,7 @@ async function confirmWithBlockhashWindow({
   } finally {
     settled = true;
     clearInterval(blockHeightTimer);
+    clearTimeout(confirmationTimeout);
   }
 }
 
