@@ -179,7 +179,8 @@ export function rateLimitHook({
   }
 
   return async function rateLimit(request) {
-    const clientKey = `${keyPrefix}:${request.ip}`;
+    const tenantKey = request.tenant?.id ? `tenant:${request.tenant.id}:` : '';
+    const clientKey = `${keyPrefix}:${tenantKey}${request.ip}`;
     const shared = getShared();
 
     if (shared) {
