@@ -46,6 +46,13 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
       jobs.set(row.id, row);
       return { rows: [row], rowCount: 1 };
     }
+    if (text.includes('SELECT * FROM sweep_jobs WHERE idempotency_key')) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (text.includes('COUNT(*)::text AS total FROM sweep_jobs')) {
+      return { rows: [{ total: '0' }], rowCount: 1 };
+    }
+    if (text.includes('pg_advisory_xact_lock')) return { rows: [], rowCount: 1 };
     if (text.includes('SELECT * FROM sweep_jobs')) {
       const row = jobs.get(String(params[0]));
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
@@ -114,7 +121,7 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
   const signer = async (_db, _publicKey, callback) => callback({ keypair: { publicKey: SOURCE } });
   const service = createSweeperService({
     db, rpc, network: 'devnet', commitment: 'confirmed',
-    signer, cipher: {}, log() {}
+    signer, cipher: {}, executionEnabled: true, log() {}
   });
   return { service, rpc, policy, jobs, events, ledger, calls };
 }
