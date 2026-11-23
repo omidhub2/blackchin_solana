@@ -150,6 +150,14 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         error.code = 'TENANT_NOT_FOUND';
         throw error;
       }
+      // A policy change invalidates every unused approval. The policy is
+      // already frozen by the upsert, so a failure here remains fail-closed.
+      await db.query(
+        `UPDATE tenant_withdrawal_approvals
+            SET status = 'revoked'
+          WHERE tenant_id = $1 AND status = 'approved'`,
+        [tenantId]
+      );
       return {
         tenantId: String(result.rows[0].tenant_id),
         enabled: result.rows[0].enabled,
@@ -189,6 +197,12 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         error.code = 'WITHDRAWAL_POLICY_NOT_FOUND';
         throw error;
       }
+      await db.query(
+        `UPDATE tenant_withdrawal_approvals
+            SET status = 'revoked'
+          WHERE tenant_id = $1 AND status = 'approved'`,
+        [tenantId]
+      );
       return {
         tenantId: String(result.rows[0].tenant_id),
         enabled: result.rows[0].enabled,
@@ -203,6 +217,14 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       if (typeof updatedBy !== 'string' || !updatedBy.trim() || updatedBy.length > 128) {
         throw new TypeError('updatedBy is required');
       }
+      // Revoke stale approvals before opening the policy. If this fails,
+      // the policy remains frozen and no old approval can become usable.
+      await db.query(
+        `UPDATE tenant_withdrawal_approvals
+            SET status = 'revoked'
+          WHERE tenant_id = $1 AND status = 'approved'`,
+        [tenantId]
+      );
       const result = await db.query(
         `UPDATE tenant_withdrawal_policies
             SET emergency_frozen = FALSE, freeze_reason = NULL,
