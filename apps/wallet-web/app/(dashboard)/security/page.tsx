@@ -336,6 +336,59 @@ export default function SecurityPage() {
         </Panel>
       ) : null}
 
+      {tenantId ? (
+        <Panel className="space-y-4 p-5">
+          <h2 className="text-sm font-semibold text-slate-200">{t('security.approvalTitle')}</h2>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <Field label={t('security.approvalCredential')}>
+              <select className={selectClass} value={approvalCredentialId} onChange={(event) => setApprovalCredentialId(event.target.value)}>
+                <option value="">Select credential</option>
+                {tenantCredentials.map((credential) => (
+                  <option key={credential.id} value={credential.id}>{credential.keyPrefix} · #{credential.id}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('security.approvalWallet')}>
+              <select className={selectClass} value={approvalWallet} onChange={(event) => setApprovalWallet(event.target.value)}>
+                <option value="">Select source wallet</option>
+                {activeWallets.map((wallet) => (
+                  <option key={wallet.id} value={wallet.publicKey}>{wallet.publicKey.slice(0, 10)}… · #{wallet.id}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('security.approvalDestination')}>
+              <select className={selectClass} value={approvalDestination} onChange={(event) => setApprovalDestination(event.target.value)}>
+                <option value="">Select approved destination</option>
+                {activeDestinations.filter((destination) => destination.network === network).map((destination) => (
+                  <option key={destination.id} value={destination.destinationPublicKey}>{destination.label || destination.destinationPublicKey.slice(0, 10) + '…'}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('security.approvalReference')}>
+              <input className={inputClass} value={approvalReference} onChange={(event) => setApprovalReference(event.target.value)} minLength={8} maxLength={128} />
+            </Field>
+            <Field label={t('security.approvalAmount')}>
+              <input className={inputClass} inputMode="decimal" value={approvalAmountSol} onChange={(event) => setApprovalAmountSol(event.target.value)} placeholder="0.1" />
+            </Field>
+            <Field label={t('security.approvalExpiry')}>
+              <select className={selectClass} value={approvalExpiry} onChange={(event) => setApprovalExpiry(event.target.value)}>
+                <option value="60">1 minute</option>
+                <option value="300">5 minutes</option>
+                <option value="600">10 minutes</option>
+                <option value="900">15 minutes</option>
+              </select>
+            </Field>
+          </div>
+          <button type="button" className="btn-primary" disabled={
+            issueApproval.isPending || !approvalCredentialId || !approvalWallet ||
+            !approvalDestination || !approvalReference.trim() || !approvalAmountSol.trim()
+          } onClick={() => issueApproval.mutate()}>
+            {issueApproval.isPending ? t('common.loading') : t('security.issueApproval')}
+          </button>
+          <p className="text-xs text-slate-500">Approval is bound to one tenant credential, one source wallet, one allowlisted destination and one exact SOL amount. It expires automatically.</p>
+        </Panel>
+      ) : null}
+
       {mutationError ? <p className="rounded-xl border border-rose-500/20 bg-rose-500/[0.06] px-4 py-3 text-sm text-rose-200">{mutationError.message}</p> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
