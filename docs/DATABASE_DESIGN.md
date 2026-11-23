@@ -189,7 +189,7 @@ Fail-closed policy limits, allowlist state, credential-bound approvals and
 append-only policy decisions. No policy row is auto-created for existing
 tenants; absence means disabled.
 
-## 4. Integrity rules
+## 6. Integrity rules
 
 1. Tenant-owned records carry a tenant relation; composite foreign keys prevent
    mismatched parents.
@@ -208,7 +208,7 @@ tenants; absence means disabled.
     atomically after broadcast. A failed post-broadcast commit leaves the
     idempotency reservation in `processing` for reconciliation.
 
-## 5. Retention and operations
+## 7. Retention and operations
 
 - Back up with PITR before every migration.
 - Apply migrations with a least-privilege migration role.
