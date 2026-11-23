@@ -10,6 +10,20 @@
 - Tenant identity is derived server-side; request-body tenant IDs are ignored.
 - Sensitive routes use shared PostgreSQL rate limits and fail closed when the
   limiter store is unavailable.
+- Tenant requests authenticate on the control-plane connection, then use a
+  separate non-superuser tenant pool. The request service graph receives only
+  a signed tenant-scoped database facade.
+- Each tenant SQL operation runs in a transaction with `SET LOCAL ROLE
+  blackchin_tenant_runtime` and transaction-local signed context. Pooled
+  sessions cannot retain a previous request's tenant context.
+- PostgreSQL validates the HMAC, issue time, tenant status and credential
+  status/expiry before returning the tenant id to RLS policies.
+- Tenant RLS is enabled on wallet, transaction, idempotency, webhook,
+  withdrawal-policy, approval, hot-wallet and operational-event tables.
+- Legacy NULL-tenant rows are not assigned or exposed to tenant sessions.
+- The tenant login must be a non-superuser, non-BYPASSRLS member of
+  `blackchin_tenant_runtime`; the migration/control-plane pool must not be
+  reused for tenant API queries.
 
 ### Dashboard operators
 
@@ -33,7 +47,25 @@
   key derivation.
 - Cross-tenant tests cover reads, writes, idempotency collisions and signing.
 
-## 3. Signing and key custody
+## 3. Signed tenant database context
+
+- `TENANT_DATABASE_URL` points to a dedicated restricted login, never the
+  migration/table-owner connection.
+- `TENANT_CONTEXT_HMAC_KEY` is a 32-byte secret. Its matching database copy is
+  stored in the private schema and is provisioned/verified at API startup.
+- The API signs tenant ID, credential ID, issue time, version and a random
+  nonce after credential authentication. Request-body tenant identifiers are
+  never accepted as context claims.
+- The database rejects missing, malformed, modified, stale or future-dated
+  contexts and re-checks that the tenant and credential remain active.
+- RLS policies apply to a restricted NOLOGIN role. The login switches to it
+  with `SET LOCAL ROLE` inside every transaction.
+- Context settings use `SET LOCAL` and are cleared automatically at commit or
+  rollback. Each request receives a fresh service graph bound to the scoped DB.
+- If the tenant DB URL, HMAC key, role membership or secret provisioning is
+  missing/mismatched, tenant routes fail closed.
+
+## 4. Signing and key custody
 
 Current implementation:
 
@@ -49,7 +81,7 @@ Current implementation:
 reports signer status as `application_encrypted` and `kms: false`. Production
 signing should fail closed until a reviewed signer boundary is deployed.
 
-## 4. Withdrawal safety
+## 5. Withdrawal safety
 
 1. Authenticate tenant credential and require `withdrawals:submit`.
 2. Resolve source wallet strictly inside the tenant.
@@ -77,7 +109,7 @@ canonical request hash; they expire within 15 minutes. Destination activation
 requires a second admin. Policy edits freeze withdrawals and revoke unused
 approvals; unfreeze is an explicit admin action.
 
-## 5. Deposit verification
+## 6. Deposit verification
 
 - Fetch and parse the transaction from RPC.
 - Reject failed transactions.
@@ -87,7 +119,7 @@ approvals; unfreeze is an explicit admin action.
 - Treat RPC timeouts as unknown, not as failure.
 - Move contradictory observations to `under_review`.
 
-## 6. Webhooks
+## 7. Webhooks
 
 - Tenant endpoints must be public HTTPS; private, loopback, link-local and
   metadata destinations are rejected.
@@ -99,7 +131,7 @@ approvals; unfreeze is an explicit admin action.
 - Secrets are encrypted at rest and returned only once.
 - Payload validation rejects sensitive field names.
 
-## 7. Input, output and transport
+## 8. Input, output and transport
 
 - Strict field validation and unknown-field rejection.
 - Parameterized SQL only.
@@ -109,7 +141,7 @@ approvals; unfreeze is an explicit admin action.
 - Dashboard responses set `Cache-Control: no-store` for secrets and sessions.
 - Secrets are redacted from Fastify logs.
 
-## 8. Logging and audit
+## 9. Logging and audit
 
 Never log:
 
@@ -123,7 +155,7 @@ Operational events, policy decisions, reconciliation evidence and transaction
 evidence provide an auditable trail. Database superusers can bypass triggers;
 production privileges must separate migration ownership from application DML.
 
-## 9. Threat model
+## 10. Threat model
 
 | Threat | Control |
 |---|---|
@@ -137,7 +169,7 @@ production privileges must separate migration ownership from application DML.
 | RPC lying or timing out | independent verification, unknown state, reconciliation |
 | Key misuse | freeze, limits, audit, dual control (target) |
 
-## 10. Production release gates
+## 11. Production release gates
 
 Do not declare public production readiness until:
 
