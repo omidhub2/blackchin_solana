@@ -366,6 +366,31 @@ export async function dashboardRoutes(app) {
     return { destination };
   });
 
+  app.get('/tenants/:tenantId/withdrawal-approvals', { preHandler: authHook }, async (request) => ({
+    items: await services(request).tenantWithdrawalPolicy.listApprovals(
+      parseTenantId(request.params.tenantId)
+    )
+  }));
+
+  app.post('/tenants/:tenantId/withdrawal-approvals/:approvalReference/revoke', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, []);
+    const approval = await services(request).tenantWithdrawalPolicy.revokeApproval({
+      tenantId: parseTenantId(request.params.tenantId),
+      approvalReference: requireString(request.params.approvalReference, 'approvalReference', {
+        min: 8, max: 128, pattern: /^[A-Za-z0-9._:-]+$/
+      })
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.approval_revoked',
+      tenantId: approval.tenantId,
+      payload: { credentialId: approval.credentialId, approvalReference: approval.approvalReference }
+    });
+    return { approval };
+  });
+
   app.post('/tenants/:tenantId/withdrawal-approvals', {
     preHandler: [authHook, adminGuard, mutationLimiter]
   }, async (request, reply) => {
