@@ -84,7 +84,7 @@ test('tenant auth rejects a missing API credential', async () => {
 });
 
 test('tenant auth attaches trusted tenant identity and credential scopes', async () => {
-  const hook = createTenantAuthHook({ db: credentialDb() });
+  const hook = tenantAuthHook();
   const reply = replyStub();
   const request = { headers: { 'x-api-key': 'bc_live_prefix.secret' } };
 
@@ -97,7 +97,7 @@ test('tenant auth attaches trusted tenant identity and credential scopes', async
     id: '4',
     code: 'acme',
     status: 'active',
-    credentialId: 'credential-9',
+    credentialId: '9',
     scopes: ['wallets:read', 'transactions:read']
   });
   assert.equal(Object.isFrozen(request.tenant), true);
