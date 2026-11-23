@@ -61,6 +61,7 @@ function workerSnapshot(worker) {
 
 export function createHealthService({
   pool,
+  additionalPools = {},
   rpc = null,
   rpcRequired = false,
   scanner = null,
@@ -127,8 +128,24 @@ export function createHealthService({
       }
 
       const poolStats = poolSnapshot(pool);
+      const pools = { primary: poolStats };
       if (poolStats?.waiting >= maxPoolWaiting && maxPoolWaiting > 0) {
         degraded.push('database_pool_saturation');
+      }
+      for (const [name, additionalPool] of Object.entries(additionalPools ?? {})) {
+        if (!additionalPool) continue;
+        const probe = await timedProbe(
+          () => additionalPool.query('SELECT 1 AS ok'),
+          probeTimeoutMs,
+          now
+        );
+        pools[name] = poolSnapshot(additionalPool);
+        const checkName = `${name}Database`;
+        checks[checkName] = probe.ok && probe.value.rows[0]?.ok === 1 ? 'ok' : 'error';
+        if (checks[checkName] !== 'ok') ready = false;
+        if (pools[name]?.waiting >= maxPoolWaiting && maxPoolWaiting > 0) {
+          degraded.push(`${name}_pool_saturation`);
+        }
       }
 
       const workerChecks = [
@@ -196,6 +213,7 @@ export function createHealthService({
           checks,
           latencyMs: { database: databaseLatencyMs, rpc: rpcLatencyMs },
           pool: poolStats,
+          pools,
           workers,
           outboxDue,
           backlogs,
