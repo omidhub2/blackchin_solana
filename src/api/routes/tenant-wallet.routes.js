@@ -14,6 +14,7 @@ import {
 import { badRequest } from '../../core/errors.js';
 import { rateLimitHook } from '../middleware/rate-limit.js';
 import { MAX_BATCH_SIZE } from '../../core/wallets/child-wallet.service.js';
+import { hashTenantWithdrawalRequest, solToLamports } from '../../core/withdrawals/tenant-withdrawal-policy.service.js';
 
 const CREATE_FIELDS = ['label', 'ownerId'];
 const STATUS_VALUES = ['active', 'disabled', 'archived'];
@@ -34,6 +35,7 @@ export async function tenantWalletRoutes(app) {
   const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'tenant-recovery', distributed });
   const withdrawalEstimateLimiter = rateLimitHook({ limit: 30, windowMs: 60_000, keyPrefix: 'tenant-withdrawal-estimate', distributed });
   const withdrawalSubmitLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-withdrawal-submit', distributed });
+  const withdrawalApprovalLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-withdrawal-approval', distributed });
   const appServices = (request) => getServices(app, request);
   const services = (request) => appServices(request).tenantWallets;
   const tenantId = (request) => request.tenant.id;
@@ -122,6 +124,46 @@ export async function tenantWalletRoutes(app) {
     const index = requireSafeInteger(parsed, 'accountIndex', { min: 0, max: 2_147_483_647 });
     return services(request).getAccountAtIndex(tenantId(request), id, index);
   });
+  app.post('/withdrawal-approvals', {
+    preHandler: [requireTenantScope('withdrawals:approve'), withdrawalApprovalLimiter]
+  }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, [
+      'fromPublicKey', 'toPublicKey', 'amountSol', 'approvalReference',
+      'expiresInSeconds'
+    ]);
+    const fromPublicKey = requirePublicKey(body.fromPublicKey, 'fromPublicKey');
+    const toPublicKey = requirePublicKey(body.toPublicKey, 'toPublicKey');
+    const amountSol = requireSolAmount(body.amountSol);
+    const amountLamports = solToLamports(amountSol);
+    const approvalReference = requireString(body.approvalReference, 'approvalReference', {
+      min: 8, max: 128, pattern: /^[A-Za-z0-9._:-]+$/
+    });
+    const expiresInSeconds = requireSafeInteger(Number(body.expiresInSeconds ?? 300), 'expiresInSeconds', {
+      min: 60, max: 900
+    });
+    const network = appServices(request).deps.network;
+    const credentialId = request.tenant.credentialId;
+    const approval = await appServices(request).tenantWithdrawalPolicy.issueApproval({
+      tenantId: tenantId(request),
+      credentialId,
+      approvalReference,
+      requestHash: hashTenantWithdrawalRequest({
+        fromPublicKey, toPublicKey, amountLamports, network, approvalReference
+      }),
+      walletPublicKey: fromPublicKey,
+      destinationPublicKey: toPublicKey,
+      amountLamports,
+      network,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
+      issuer: `tenant_credential:${credentialId}`,
+      issuerEventId: requireIdempotencyKey(request.headers['idempotency-key']),
+      requireApprovalScope: true
+    });
+    reply.header('Cache-Control', 'no-store');
+    return reply.code(201).send({ approval });
+  });
+
   app.get('/withdrawals', {
     preHandler: requireTenantScope('withdrawals:read')
   }, async (request) => appServices(request).tenantWithdrawals.list({
