@@ -24,6 +24,7 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
   const events = [];
   const ledger = [];
   const calls = [];
+  const logs = [];
 
   async function query(sql, params = []) {
     const text = String(sql);
