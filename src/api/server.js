@@ -28,7 +28,7 @@ function buildDistributedLimiter(db) {
  *   logger?: boolean|object,    // Fastify logger option
  * }} [options]
  */
-export function buildServer({ services, logger = true, health = null, tenantPool = null, tenantContextSigner = null, createTenantServices = null } = {}) {
+export function buildServer({ services, logger = true, health = null, metrics = null, tenantPool = null, tenantContextSigner = null, createTenantServices = null } = {}) {
   // Fail closed before the port is opened when the API key is missing.
   assertApiKeyConfigured();
   const app = Fastify({
@@ -61,6 +61,7 @@ export function buildServer({ services, logger = true, health = null, tenantPool
   });
 
   app.decorate('services', services ?? null);
+  app.decorate('metrics', metrics);
   app.decorate('tenantPool', tenantPool);
   app.decorate('tenantContextSigner', tenantContextSigner);
   app.decorate('createTenantServices', createTenantServices);
@@ -74,6 +75,18 @@ export function buildServer({ services, logger = true, health = null, tenantPool
    */
   app.addHook('onRequest', async (request) => {
     request.services = services ?? null;
+    if (metrics) request.metricsStartedAt = process.hrtime.bigint();
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    if (!metrics || request.metricsStartedAt === undefined) return;
+    const elapsedNs = process.hrtime.bigint() - request.metricsStartedAt;
+    metrics.recordHttpRequest({
+      method: request.method,
+      route: request.routeOptions?.url ?? request.routerPath ?? 'unmatched',
+      statusCode: reply.statusCode,
+      durationMs: Number(elapsedNs) / 1_000_000
+    });
   });
 
   app.addHook('preHandler', async (request, reply) => {
@@ -109,6 +122,16 @@ export function buildServer({ services, logger = true, health = null, tenantPool
 
     const result = await health.ready();
     return reply.code(result.statusCode).send(result.body);
+  });
+
+  // Prometheus metrics are protected by the standard API-key hook. Never
+  // expose request paths with IDs, query values or wallet identifiers.
+  app.get('/metrics', async (_request, reply) => {
+    if (!metrics) {
+      return reply.code(503).send('metrics_unavailable\\n');
+    }
+    reply.type('text/plain; version=0.0.4; charset=utf-8');
+    return metrics.render();
   });
 
   const distributed = buildDistributedLimiter(services?.deps?.db ?? null);
