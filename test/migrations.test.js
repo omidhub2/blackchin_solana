@@ -379,7 +379,7 @@ test('0015 installs immutable ledger/idempotency guards and per-wallet withdrawa
   assert.match(sql, /Invalid blockchain transaction status transition/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION enforce_idempotency_reservation_integrity/i);
   assert.match(sql, /NEW\.request_hash IS DISTINCT FROM OLD\.request_hash/i);
-  assert.match(sql, /a persisted transaction signature cannot be replaced or cleared/i);
+  assert.match(sql, /a transaction signature may only be persisted once while processing/i);
   assert.match(sql, /Invalid idempotency status transition/i);
   assert.match(sql, /HAVING COUNT\(\*\) > 1/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
