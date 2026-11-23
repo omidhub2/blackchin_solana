@@ -339,6 +339,64 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       };
     },
 
+    async listApprovals(tenantId) {
+      tenantId = assertId(tenantId, 'tenantId');
+      const result = await db.query(
+        `SELECT tenant_id, credential_id, approval_reference, wallet_public_key,
+                destination_public_key, network, asset, amount_lamports, status,
+                issuer, issuer_event_id, expires_at, approved_at, consumed_at
+           FROM tenant_withdrawal_approvals
+          WHERE tenant_id = $1
+          ORDER BY created_at DESC, id DESC
+          LIMIT 100`,
+        [tenantId]
+      );
+      return result.rows.map((row) => ({
+        tenantId: String(row.tenant_id),
+        credentialId: String(row.credential_id),
+        approvalReference: row.approval_reference,
+        walletPublicKey: row.wallet_public_key,
+        destinationPublicKey: row.destination_public_key,
+        network: row.network,
+        asset: row.asset,
+        amountLamports: String(row.amount_lamports),
+        status: row.status,
+        issuer: row.issuer,
+        issuerEventId: row.issuer_event_id,
+        expiresAt: row.expires_at,
+        approvedAt: row.approved_at,
+        consumedAt: row.consumed_at
+      }));
+    },
+
+    async revokeApproval({ tenantId, approvalReference } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      if (typeof approvalReference !== 'string' ||
+          !/^[A-Za-z0-9._:-]{8,128}$/.test(approvalReference)) {
+        throw new TypeError('approvalReference is invalid');
+      }
+      const result = await db.query(
+        `UPDATE tenant_withdrawal_approvals
+            SET status = 'revoked'
+          WHERE tenant_id = $1 AND approval_reference = $2 AND status = 'approved'
+          RETURNING tenant_id, credential_id, approval_reference, status, expires_at`,
+        [tenantId, approvalReference]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Pending approval was not found or is no longer revocable');
+        error.statusCode = 409;
+        error.code = 'WITHDRAWAL_APPROVAL_NOT_REVOCABLE';
+        throw error;
+      }
+      return {
+        tenantId: String(result.rows[0].tenant_id),
+        credentialId: String(result.rows[0].credential_id),
+        approvalReference: result.rows[0].approval_reference,
+        status: result.rows[0].status,
+        expiresAt: result.rows[0].expires_at
+      };
+    },
+
     async issueApproval(input = {}) {
       const tenantId = assertId(input.tenantId, 'tenantId');
       const credentialId = assertId(input.credentialId, 'credentialId');
