@@ -126,7 +126,7 @@ export async function tenantWalletRoutes(app) {
     return services(request).getAccountAtIndex(tenantId(request), id, index);
   });
   app.post('/withdrawal-approvals', {
-    preHandler: [requireTenantScope('withdrawals:approve'), withdrawalApprovalLimiter]
+    preHandler: [requireTenantScope('withdrawals:approve'), requireTenantScope('withdrawals:submit'), withdrawalApprovalLimiter]
   }, async (request, reply) => {
     const body = requireObject(request.body ?? {}, 'body');
     rejectUnknownKeys(body, [
