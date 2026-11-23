@@ -60,6 +60,12 @@ const reconciliationIntervalMs = Number(process.env.DEPOSIT_RECONCILIATION_INTER
 const withdrawalReconciliationEnabled = process.env.WITHDRAWAL_RECONCILIATION_ENABLED === 'true';
 const withdrawalReconciliationIntervalMs = Number(process.env.WITHDRAWAL_RECONCILIATION_INTERVAL_MS || 60_000);
 const webhookDeliveryEnabled = process.env.WEBHOOK_DELIVERY_ENABLED === 'true';
+const sweeperEnabled = process.env.SWEEPER_ENABLED === 'true';
+const sweeperExecutionEnabled = process.env.SWEEPER_EXECUTION_ENABLED === 'true';
+const sweeperMainnetExecutionEnabled = process.env.SWEEPER_MAINNET_EXECUTION_ENABLED === 'true';
+const sweeperIntervalMs = Number(process.env.SWEEPER_INTERVAL_MS || 60_000);
+const sweeperDatabaseUrl = process.env.SWEEPER_DATABASE_URL || null;
+let sweeperPool = null;
 const webhookDeliveryIntervalMs = Number(process.env.WEBHOOK_DELIVERY_INTERVAL_MS || 5_000);
 const legacyWebhookEndpoint = process.env.WEBHOOK_ENDPOINT || null;
 const legacyWebhookSecret = process.env.WEBHOOK_SECRET || null;
@@ -98,6 +104,43 @@ if (depositWorkersEnabled) {
   });
   depositWorkerPool.on('error', (error) => {
     console.error('[DEPOSIT WORKER POSTGRESQL POOL ERROR]', {
+      code: error.code ?? 'UNKNOWN',
+      message: error.message
+    });
+  });
+}
+
+if (sweeperEnabled) {
+  if (!sweeperDatabaseUrl) {
+    throw new Error('SWEEPER_DATABASE_URL is required when SWEEPER_ENABLED is true');
+  }
+  let sweeperUrl;
+  try {
+    sweeperUrl = new URL(sweeperDatabaseUrl);
+  } catch (error) {
+    throw new Error('SWEEPER_DATABASE_URL is not a valid URL', { cause: error });
+  }
+  if (!['postgres:', 'postgresql:'].includes(sweeperUrl.protocol) ||
+      !sweeperUrl.hostname || !sweeperUrl.username || !sweeperUrl.pathname || sweeperUrl.pathname === '/') {
+    throw new Error('SWEEPER_DATABASE_URL must include a PostgreSQL host, username and database name');
+  }
+  const sweeperHost = sweeperUrl.hostname.replace(/^\\[|\\]$/g, '');
+  if (!['localhost', '127.0.0.1', '::1'].includes(sweeperHost) &&
+      sweeperUrl.searchParams.get('sslmode') !== 'verify-full') {
+    throw new Error('Remote SWEEPER_DATABASE_URL must explicitly use sslmode=verify-full');
+  }
+  const pgModule = await import('pg');
+  sweeperPool = new pgModule.default.Pool({
+    connectionString: sweeperDatabaseUrl,
+    max: 4,
+    min: 0,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+    keepAlive: true,
+    application_name: 'blackchin-sweeper'
+  });
+  sweeperPool.on('error', (error) => {
+    console.error('[SWEEPER POSTGRESQL POOL ERROR]', {
       code: error.code ?? 'UNKNOWN',
       message: error.message
     });
@@ -146,6 +189,7 @@ async function shutdown(signal) {
     if (server) await server.close();
     if (tenantPool) await tenantPool.end();
     if (depositWorkerPool) await depositWorkerPool.end();
+    if (sweeperPool) await sweeperPool.end();
     await disconnectPostgres();
     process.exitCode = 0;
   } catch (error) {
@@ -171,6 +215,13 @@ try {
     await provisionTenantContextSecret(pool, tenantContextKey);
     await assertTenantRuntimeRole(tenantPool);
     tenantContextSigner = createTenantContextSigner(tenantContextKey);
+  }
+
+  if (sweeperPool) {
+    const { assertSweeperRuntimeRole } =
+      await import('./infrastructure/security/sweeper-worker-role.js');
+    const sweeperIdentity = await assertSweeperRuntimeRole(sweeperPool);
+    console.log('[SWEEPER DATABASE READY]', sweeperIdentity);
   }
 
   if (depositWorkerPool) {
@@ -200,6 +251,11 @@ try {
   await pool.query('SELECT event_type, payload FROM operational_events LIMIT 0');
   await pool.query('SELECT endpoint_url, secret_encrypted FROM tenant_webhook_endpoints LIMIT 0');
   await pool.query('SELECT public_key, signing_enabled FROM hot_wallets LIMIT 0');
+  if (sweeperEnabled) {
+    await pool.query('SELECT destination_public_key, execution_enabled FROM sweep_policies LIMIT 0');
+    await pool.query('SELECT transaction_signature, idempotency_key FROM sweep_jobs LIMIT 0');
+    await pool.query('SELECT outcome, signature FROM sweep_events LIMIT 0');
+  }
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
@@ -211,6 +267,8 @@ try {
   const { createMetricsService } = await import('./core/metrics.service.js');
   const { getOperationalBacklog } = await import('./infrastructure/database/observability.repository.js');
   const { recordOperationalEventSafe } = await import('./infrastructure/database/operational-event.repository.js');
+  const { createSweeperService } = await import('./core/sweeper/sweeper.service.js');
+  const { createSweeperWorker } = await import('./workers/sweeper.worker.js');
   const metrics = createMetricsService();
 
   // Creating services validates ENCRYPTION_KEY and fails closed before the
@@ -372,6 +430,31 @@ try {
     });
   }
 
+
+  if (sweeperEnabled) {
+    const sweeperService = createSweeperService({
+      db: sweeperPool,
+      rpc: services.deps.rpc,
+      cipher: services.deps.cipher,
+      network: scannerNetwork,
+      commitment: services.deps.commitment,
+      executionEnabled: sweeperExecutionEnabled,
+      allowMainnetExecution: sweeperMainnetExecutionEnabled,
+      log: (event, meta) => console.log(JSON.stringify({
+        time: new Date().toISOString(), event, ...meta
+      }))
+    });
+    sweeperWorker = createSweeperWorker({
+      sweeper: sweeperService,
+      pool: sweeperPool,
+      network: scannerNetwork,
+      intervalMs: sweeperIntervalMs,
+      log: (event, meta) => console.log(JSON.stringify({
+        time: new Date().toISOString(), event, ...meta
+      }))
+    });
+  }
+
   if (withdrawalReconciliationEnabled) {
     withdrawalReconciliationWorker = createDepositScannerWorker({
       scanner: services.withdrawalReconciliation,
@@ -403,6 +486,9 @@ try {
     withdrawalReconciliationEnabled,
     webhookWorker,
     webhookDeliveryEnabled,
+    additionalPools: { tenant: tenantPool, depositWorker: depositWorkerPool, sweeper: sweeperPool },
+    sweeperWorker,
+    sweeperEnabled,
     network: scannerNetwork,
     scope: scannerScope,
     queueDepth: async () => {
@@ -421,6 +507,7 @@ try {
     createTenantServices: (tenantDb) => createTenantRequestServices(services, tenantDb)
   });
   await server.listen({ host, port });
+  if (sweeperWorker) await sweeperWorker.start();
 
   if (worker) {
     await worker.start();
@@ -451,6 +538,7 @@ try {
   console.error('[API STARTUP FAILED]', error.message);
   if (tenantPool) await tenantPool.end().catch(() => { });
   if (depositWorkerPool) await depositWorkerPool.end().catch(() => { });
+  if (sweeperPool) await sweeperPool.end().catch(() => { });
   await disconnectPostgres().catch(() => { });
   process.exitCode = 1;
 }
