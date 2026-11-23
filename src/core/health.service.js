@@ -1,22 +1,82 @@
 /**
- * Readiness and liveness reporting.
+ * Liveness, readiness and coarse operational diagnostics.
  *
- * `GET /health` stays public and minimal (liveness). `GET /health/ready` is
- * unauthenticated too, but only reports coarse status — never URLs,
- * credentials, keys or internal hostnames.
+ * Public responses intentionally omit connection strings, hostnames, RPC URLs,
+ * tenant IDs, wallet addresses, credentials and raw error messages.
  */
+async function timedProbe(operation, timeoutMs, now) {
+  const started = now();
+  let timer;
+  try {
+    const value = await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error('probe_timeout');
+          error.code = 'PROBE_TIMEOUT';
+          reject(error);
+        }, timeoutMs);
+        timer.unref?.();
+      })
+    ]);
+    return { ok: true, value, latencyMs: Math.max(0, now() - started) };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error.code === 'PROBE_TIMEOUT' ? 'timeout' : 'unavailable',
+      latencyMs: Math.max(0, now() - started)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function poolSnapshot(pool) {
+  if (!pool) return null;
+  return {
+    total: Number(pool.totalCount ?? 0),
+    idle: Number(pool.idleCount ?? 0),
+    waiting: Number(pool.waitingCount ?? 0),
+    max: Number(pool.options?.max ?? pool.max ?? 0)
+  };
+}
+
+function workerSnapshot(worker) {
+  if (!worker || typeof worker.health !== 'function') {
+    return { state: 'not_started', stale: true, hasLock: false };
+  }
+  const health = worker.health();
+  return {
+    state: health.state ?? 'unknown',
+    stale: health.stale === true,
+    hasLock: health.hasLock === true,
+    runs: Number(health.runs ?? health.stats?.runs ?? 0),
+    successes: Number(health.successes ?? health.stats?.successes ?? 0),
+    failures: Number(health.failures ?? health.stats?.failures ?? 0),
+    consecutiveFailures: Number(health.consecutiveFailures ?? health.stats?.consecutiveFailures ?? 0),
+    lastSuccessAt: health.lastSuccessAt ?? health.stats?.lastSuccessAt ?? null,
+    lastErrorAt: health.lastErrorAt ?? health.stats?.lastErrorAt ?? null
+  };
+}
 
 export function createHealthService({
   pool,
+  rpc = null,
+  rpcRequired = false,
   scanner = null,
   workerEnabled = false,
   reconciliationWorker = null,
   reconciliationEnabled = false,
   withdrawalReconciliationWorker = null,
   withdrawalReconciliationEnabled = false,
+  webhookWorker = null,
+  webhookDeliveryEnabled = false,
   network,
   scope,
   queueDepth = null,
+  backlogStats = null,
+  probeTimeoutMs = 2_500,
+  maxPoolWaiting = 2,
   now = () => Date.now()
 }) {
   const startedAt = now();
@@ -30,90 +90,99 @@ export function createHealthService({
       };
     },
 
-    /**
-     * Ready = database reachable AND (scanner disabled OR scanner healthy).
-     * Returns 200 when ready, 503 otherwise.
-     */
     async ready() {
       const checks = {
         database: 'unknown',
+        rpc: rpc ? 'unknown' : 'disabled',
         scanner: workerEnabled ? 'unknown' : 'disabled',
         reconciliation: reconciliationEnabled ? 'unknown' : 'disabled',
-        withdrawalReconciliation: withdrawalReconciliationEnabled ? 'unknown' : 'disabled'
+        withdrawalReconciliation: withdrawalReconciliationEnabled ? 'unknown' : 'disabled',
+        webhookDelivery: webhookDeliveryEnabled ? 'unknown' : 'disabled'
       };
+      const degraded = [];
       let ready = true;
+      let databaseLatencyMs = null;
+      let rpcLatencyMs = null;
 
-      try {
-        const result = await pool.query('SELECT 1 AS ok');
-        checks.database = result.rows[0]?.ok === 1 ? 'ok' : 'error';
-        ready = ready && checks.database === 'ok';
-      } catch {
-        checks.database = 'error';
+      const database = await timedProbe(
+        () => pool.query('SELECT 1 AS ok'),
+        probeTimeoutMs,
+        now
+      );
+      databaseLatencyMs = database.latencyMs;
+      checks.database = database.ok && database.value.rows[0]?.ok === 1 ? 'ok' : 'error';
+      if (checks.database !== 'ok') ready = false;
+      if (databaseLatencyMs > 1_000) degraded.push('database_latency');
+
+      if (rpc) {
+        const probe = await timedProbe(() => rpc.getSlot('processed'), probeTimeoutMs, now);
+        rpcLatencyMs = probe.latencyMs;
+        checks.rpc = probe.ok && Number.isSafeInteger(probe.value) ? 'ok' : probe.code ?? 'error';
+        if (rpcRequired && checks.rpc !== 'ok') ready = false;
+        if (checks.rpc !== 'ok') degraded.push('rpc_unavailable');
+        if (rpcLatencyMs > 1_500) degraded.push('rpc_latency');
+      } else if (rpcRequired) {
+        checks.rpc = 'not_configured';
         ready = false;
       }
 
-      if (reconciliationEnabled) {
-        if (!reconciliationWorker) {
-          checks.reconciliation = 'not_started';
+      const poolStats = poolSnapshot(pool);
+      if (poolStats?.waiting >= maxPoolWaiting && maxPoolWaiting > 0) {
+        degraded.push('database_pool_saturation');
+      }
+
+      const workerChecks = [
+        ['scanner', workerEnabled, scanner],
+        ['reconciliation', reconciliationEnabled, reconciliationWorker],
+        ['withdrawalReconciliation', withdrawalReconciliationEnabled, withdrawalReconciliationWorker],
+        ['webhookDelivery', webhookDeliveryEnabled, webhookWorker]
+      ];
+      const workers = {};
+      for (const [name, enabled, worker] of workerChecks) {
+        if (!enabled) {
+          workers[name] = { state: 'disabled', stale: false, hasLock: false };
+          continue;
+        }
+        const snapshot = workerSnapshot(worker);
+        workers[name] = snapshot;
+        checks[name] = snapshot.state;
+        if (name !== 'webhookDelivery' &&
+            (snapshot.state !== 'running' || snapshot.stale || !snapshot.hasLock)) {
           ready = false;
-        } else {
-          const reconciliationHealth = reconciliationWorker.health();
-          checks.reconciliation = reconciliationHealth.state;
-          checks.reconciliationStale = reconciliationHealth.stale;
-          if (
-            reconciliationHealth.state !== 'running' ||
-            reconciliationHealth.stale === true ||
-            reconciliationHealth.hasLock !== true
-          ) {
-            ready = false;
-          }
+        }
+        if (snapshot.consecutiveFailures >= 3 || snapshot.stale) {
+          degraded.push(`${name}_degraded`);
         }
       }
 
-      if (withdrawalReconciliationEnabled) {
-        if (!withdrawalReconciliationWorker) {
-          checks.withdrawalReconciliation = 'not_started';
-          ready = false;
-        } else {
-          const withdrawalHealth = withdrawalReconciliationWorker.health();
-          checks.withdrawalReconciliation = withdrawalHealth.state;
-          checks.withdrawalReconciliationStale = withdrawalHealth.stale;
-          if (
-            withdrawalHealth.state !== 'running' ||
-            withdrawalHealth.stale === true ||
-            withdrawalHealth.hasLock !== true
-          ) {
-            ready = false;
-          }
-        }
-      }
-
-      let outboxPending = null;
-
+      let outboxDue = null;
+      let backlogs = null;
       if (typeof queueDepth === 'function') {
         try {
-          outboxPending = await queueDepth();
+          outboxDue = await queueDepth();
         } catch {
           checks.outbox = 'unavailable';
+          degraded.push('outbox_metrics_unavailable');
         }
       }
-
-      if (workerEnabled) {
-        if (!scanner) {
-          checks.scanner = 'not_started';
-          ready = false;
-        } else {
-          const health = scanner.health();
-          checks.scanner = health.state;
-          checks.scannerStale = health.stale;
-
-          if (
-            health.state !== 'running' ||
-            health.stale === true ||
-            health.hasLock !== true
-          ) {
-            ready = false;
+      if (typeof backlogStats === 'function') {
+        try {
+          backlogs = await backlogStats();
+          if (backlogs.signedWithdrawalsPending > 0) degraded.push('signed_withdrawals_pending');
+          if (backlogs.ledgerUnderReview > 0 ||
+              backlogs.depositReconciliationUnderReview > 0 ||
+              backlogs.withdrawalReconciliationUnderReview > 0) {
+            degraded.push('transactions_under_review');
           }
+          if (backlogs.webhookPending > 1_000 || backlogs.oldestWebhookAgeSeconds > 300) {
+            degraded.push('webhook_backlog');
+          }
+          if (backlogs.oldestSignedWithdrawalAgeSeconds > 300) {
+            degraded.push('signed_withdrawal_age');
+          }
+        } catch {
+          checks.backlogs = 'unavailable';
+          degraded.push('backlog_metrics_unavailable');
         }
       }
 
@@ -121,10 +190,15 @@ export function createHealthService({
         statusCode: ready ? 200 : 503,
         body: {
           ready,
+          degraded: [...new Set(degraded)],
           network,
           scope,
           checks,
-          outboxDue: outboxPending,
+          latencyMs: { database: databaseLatencyMs, rpc: rpcLatencyMs },
+          pool: poolStats,
+          workers,
+          outboxDue,
+          backlogs,
           uptimeSeconds: Math.floor((now() - startedAt) / 1000)
         }
       };
