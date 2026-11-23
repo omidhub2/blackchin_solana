@@ -562,6 +562,8 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
             AND c.status = 'active' AND t.status = 'active'
             AND c.scopes @> ARRAY['withdrawals:submit']::text[]
             AND ($12::boolean = FALSE OR c.scopes @> ARRAY['withdrawals:approve']::text[])
+            AND $11 > clock_timestamp()
+            AND $11 <= clock_timestamp() + INTERVAL '15 minutes'
          ON CONFLICT (issuer, issuer_event_id) DO NOTHING
          RETURNING tenant_id, credential_id, approval_reference, request_hash,
                    wallet_public_key, destination_public_key, network, asset,
@@ -641,8 +643,8 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
              tenant_id, credential_id, approval_reference, idempotency_key,
              decision, reason_code, request_hash, wallet_public_key,
              destination_public_key, network, amount_lamports, policy_version,
-             correlation_id
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $4)`,
+             correlation_id, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $4, clock_timestamp())`,
           [tenantId, credentialId, approvalReference, idempotencyKey, value,
             reason, requestHash, fromPublicKey, toPublicKey, network,
             amountLamports, policyVersion]
@@ -723,16 +725,16 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
               const usageResult = await client.query(
                 `SELECT
                    COALESCE(SUM(amount_lamports) FILTER (
-                     WHERE created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                     WHERE created_at >= date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                    ), 0)::text AS daily_lamports,
                    COUNT(*) FILTER (
-                     WHERE created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+                     WHERE created_at >= date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                    )::text AS daily_count,
                    COALESCE(SUM(amount_lamports), 0)::text AS weekly_lamports,
                    COUNT(*)::text AS weekly_count
                  FROM tenant_withdrawal_policy_events
                  WHERE tenant_id = $1 AND decision = 'allowed'
-                   AND created_at >= date_trunc('week', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+                   AND created_at >= date_trunc('week', clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
                 [tenantId]
               );
               const usage = usageResult.rows[0] ?? {};
