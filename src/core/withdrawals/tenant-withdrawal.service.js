@@ -2,7 +2,6 @@
  * Tenant-isolated native SOL withdrawals for HD child wallets.
  * Tenant ownership is enforced on wallet lookup, signing, idempotency and ledger writes.
  */
-import crypto from 'node:crypto';
 import { badRequest, conflict, notFound, serviceUnavailable } from '../errors.js';
 import {
   findAccountByPublicKeyForTenant,
@@ -15,6 +14,7 @@ import {
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
 import { emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
 import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
+import { hashTenantWithdrawalRequest } from './tenant-withdrawal-policy.service.js';
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{16,128}$/;
 
@@ -36,12 +36,6 @@ function parseAmountLamports(amountSol) {
     throw badRequest('amountSol is outside the supported transfer range', 'INVALID_AMOUNT');
   }
   return value.toString();
-}
-
-function hashRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference }) {
-  return crypto.createHash('sha256')
-    .update(JSON.stringify({ fromPublicKey, toPublicKey, amountSol, network, approvalReference }))
-    .digest('hex');
 }
 
 function mapWithdrawalRecord(row) {
@@ -200,7 +194,7 @@ export function createTenantWithdrawalService({
         await hotWallets.assertCanSpend({ tenantId, publicKey: fromPublicKey, amountLamports });
       }
 
-      const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference });
+      const requestHash = hashTenantWithdrawalRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference });
       const reservation = await reserve({
         tenantId, credentialId, approvalReference, idempotencyKey, requestHash,
         walletPublicKey: fromPublicKey, toPublicKey, amountLamports
