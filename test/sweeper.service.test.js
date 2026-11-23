@@ -204,12 +204,12 @@ test('persists the signed signature before broadcast and atomically records the 
   const broadcast = h.calls.findIndex((call) => call.action === 'broadcast');
   assert.ok(signatureWrite >= 0);
   assert.ok(broadcast > signatureWrite);
-  assert.equal(result.job.status, 'completed');
+  assert.equal(result.job.status, 'submitted');
   assert.equal(result.job.signature, SIGNATURE);
   assert.equal(h.ledger.length, 1);
   assert.equal(h.ledger[0].direction, 'sweep');
   assert.equal(h.ledger[0].amount_lamports, '85000');
-  assert.equal(h.events.at(-1).params[3], 'completed');
+  assert.equal(h.events.at(-1).params[3], 'confirmed_waiting_finality');
 });
 
 test('refuses execution when the policy execution switch is off', async () => {
