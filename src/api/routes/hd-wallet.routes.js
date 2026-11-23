@@ -50,6 +50,8 @@ export async function hdWalletRoutes(app) {
     });
 
     const result = await services(request).hdWallets.createHdWallet({ label, ownerId });
+    reply.header('Cache-Control', 'no-store');
+    reply.header('Pragma', 'no-cache');
 
     return reply.code(201).send({
       wallet: result.wallet,
