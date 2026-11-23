@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
 import { createTenantAuthHook, requireTenantScope } from '../src/api/middleware/tenant-auth.js';
+import { createTenantContextSigner } from '../src/infrastructure/security/tenant-context.js';
 
 function replyStub() {
   return {
@@ -28,8 +29,8 @@ function credentialDb({ tenantStatus = 'active', credentialStatus = 'active', ex
         return {
           rowCount: 1,
           rows: [{
-            credential_id: 'credential-9',
-            tenant_id: 'tenant-4',
+            credential_id: '9',
+            tenant_id: '4',
             key_prefix: 'bc_live_prefix',
             secret_hash: secretHash,
             scopes: ['wallets:read', 'transactions:read'],
@@ -51,8 +52,27 @@ function credentialDb({ tenantStatus = 'active', credentialStatus = 'active', ex
   };
 }
 
+
+function tenantAuthHook(db = credentialDb()) {
+  const tenantPool = {
+    async connect() {
+      return {
+        async query() { return { rows: [], rowCount: 0 }; },
+        release() {}
+      };
+    }
+  };
+  const signer = createTenantContextSigner('a'.repeat(64));
+  return createTenantAuthHook({
+    db,
+    tenantPool,
+    contextSigner: signer,
+    createTenantServices: (tenantDb) => ({ deps: { db: tenantDb } })
+  });
+}
+
 test('tenant auth rejects a missing API credential', async () => {
-  const hook = createTenantAuthHook({ db: credentialDb() });
+  const hook = tenantAuthHook();
   const reply = replyStub();
   const request = { headers: {} };
 
@@ -71,8 +91,10 @@ test('tenant auth attaches trusted tenant identity and credential scopes', async
   await hook(request, reply);
 
   assert.equal(reply.payload, null);
+  assert.ok(request.services?.deps?.db);
+  assert.notEqual(request.services.deps.db, credentialDb());
   assert.deepEqual(request.tenant, {
-    id: 'tenant-4',
+    id: '4',
     code: 'acme',
     status: 'active',
     credentialId: 'credential-9',
@@ -87,7 +109,7 @@ test('tenant auth rejects suspended tenants and revoked credentials', async () =
     credentialDb({ tenantStatus: 'suspended' }),
     credentialDb({ credentialStatus: 'revoked' })
   ]) {
-    const hook = createTenantAuthHook({ db });
+    const hook = tenantAuthHook(db);
     const reply = replyStub();
     const request = { headers: { 'x-api-key': 'bc_live_prefix.secret' } };
 
