@@ -750,7 +750,8 @@ export async function sendSolWithSigner({
   amountSol,
   getKeypair,
   onSigned,
-  commitment: requestedCommitment = defaultCommitment
+  commitment: requestedCommitment = defaultCommitment,
+  rpcConnection = connection
 }) {
   if (typeof getKeypair !== 'function') {
     throw new TypeError('A signing key provider is required');
@@ -771,7 +772,7 @@ export async function sendSolWithSigner({
     throw new Error('Signing key does not match the sender address');
   }
 
-  const latestBlockhash = await connection.getLatestBlockhash(commitmentLevel);
+  const latestBlockhash = await rpcConnection.getLatestBlockhash(commitmentLevel);
   const transaction = new Transaction({
     feePayer: senderAddress,
     recentBlockhash: latestBlockhash.blockhash
@@ -783,7 +784,7 @@ export async function sendSolWithSigner({
     })
   );
 
-  const feeLamports = await connection.getFeeForMessage(
+  const feeLamports = await rpcConnection.getFeeForMessage(
     transaction.compileMessage(),
     commitmentLevel
   );
@@ -792,7 +793,7 @@ export async function sendSolWithSigner({
     throw new Error('Unable to obtain a valid transaction fee estimate');
   }
 
-  const balanceLamports = await connection.getBalance(senderAddress, commitmentLevel);
+  const balanceLamports = await rpcConnection.getBalance(senderAddress, commitmentLevel);
 
   if (!Number.isSafeInteger(balanceLamports) || balanceLamports < 0) {
     throw new Error('RPC returned an invalid sender balance');
@@ -822,7 +823,7 @@ export async function sendSolWithSigner({
   const rawTransaction = transaction.serialize();
   let signature;
   try {
-    signature = await connection.sendRawTransaction(rawTransaction, {
+    signature = await rpcConnection.sendRawTransaction(rawTransaction, {
       skipPreflight: false,
       preflightCommitment: commitmentLevel,
       maxRetries: 3
@@ -840,7 +841,8 @@ export async function sendSolWithSigner({
     confirmation = await confirmWithBlockhashWindow({
       signature,
       latestBlockhash,
-      commitmentLevel
+      commitmentLevel,
+      rpcConnection
     });
   } catch (error) {
     error.signature = signature;
