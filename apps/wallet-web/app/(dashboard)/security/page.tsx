@@ -412,6 +412,8 @@ export default function SecurityPage() {
           <>
             {policy.isLoading ? (
               <p className="text-xs text-slate-500">{t('common.loading')}</p>
+            ) : policy.isError ? (
+              <p className="text-sm text-rose-300">{policy.error.message}</p>
             ) : policy.data && editingPolicyTenantId !== tenantId ? (
               <p className="rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 py-3 text-sm text-slate-400">
                 This tenant already has a withdrawal policy. Edit or delete it from Withdrawal Policies.
