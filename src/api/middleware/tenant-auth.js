@@ -1,4 +1,5 @@
 import { authenticateApiCredential } from '../../infrastructure/database/tenant.repository.js';
+import { createTenantScopedDatabase } from '../../infrastructure/security/tenant-context.js';
 
 function unauthorized(reply) {
   return reply.code(401).send({
@@ -8,11 +9,17 @@ function unauthorized(reply) {
 }
 
 /**
- * Tenant authentication hook. It only establishes a trusted request.tenant
- * context; routes must still pass tenantId through every service/repository
- * operation before this hook is enabled on customer-facing endpoints.
+ * Authenticate on the privileged control-plane connection, then replace the
+ * request service container with services backed exclusively by a signed,
+ * request-scoped tenant database facade. Tenant routes never receive the
+ * control-plane pool.
  */
-export function createTenantAuthHook({ db }) {
+export function createTenantAuthHook({
+  db,
+  tenantPool,
+  contextSigner,
+  createTenantServices
+}) {
   if (!db || typeof db.query !== 'function') {
     throw new TypeError('A database query executor is required for tenant authentication');
   }
@@ -24,13 +31,34 @@ export function createTenantAuthHook({ db }) {
     const identity = await authenticateApiCredential(db, supplied);
     if (!identity) return unauthorized(reply);
 
-    request.tenant = Object.freeze({
+    if (!tenantPool || !contextSigner || typeof createTenantServices !== 'function') {
+      return reply.code(503).send({
+        error: 'TENANT_API_UNAVAILABLE',
+        message: 'Tenant-isolated database access is not configured'
+      });
+    }
+
+    const tenant = Object.freeze({
       id: identity.tenant.id,
       code: identity.tenant.tenantCode,
       status: identity.tenant.status,
       credentialId: identity.credential.id,
       scopes: Object.freeze([...identity.credential.scopes])
     });
+
+    const signedContext = contextSigner.create({
+      tenantId: tenant.id,
+      credentialId: tenant.credentialId
+    });
+    const tenantDb = createTenantScopedDatabase(tenantPool, signedContext);
+
+    request.tenant = tenant;
+    request.services = createTenantServices(tenantDb, tenant);
+
+    // The service container is request-local and carries no admin connection.
+    if (!request.services?.deps?.db || request.services.deps.db !== tenantDb) {
+      throw new Error('Tenant service container is not bound to the scoped database');
+    }
   };
 }
 
