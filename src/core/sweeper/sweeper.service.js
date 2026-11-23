@@ -5,7 +5,6 @@
  * job. Execution is opt-in, uses the existing HD signer, persists the signed
  * signature before broadcast, and never tops up a child wallet automatically.
  */
-import crypto from 'node:crypto';
 import { conflict, notFound, serviceUnavailable } from '../errors.js';
 import { withSigningKey } from '../../infrastructure/security/wallet-signer.js';
 import {
@@ -331,6 +330,7 @@ export function createSweeperService({
           });
         }
       }
+      Object.assign(this.metrics, metrics);
       return metrics;
     },
 
