@@ -46,6 +46,7 @@ Not allowed:
 | 0012 | Fail-closed withdrawal policy, destination allowlist, approvals, policy audit |
 | 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |
 | 0014 | HMAC-verified tenant context, restricted runtime role and PostgreSQL row-level policies |
+| 0015 | Immutable ledger/idempotency identity, legal state transitions and one in-flight withdrawal per source wallet |
 
 Migrations are forward-only and checksum-verified. Never edit an applied
 migration.
@@ -109,7 +110,18 @@ Unique `(signature, wallet_public_key, direction)` makes recording idempotent.
 
 Tenant-scoped withdrawal execution intents. Binds tenant, credential, approval
 reference, request hash, wallet, destination, amount, network and signature.
-`processing` is an execution guard, not a customer balance hold.
+`processing` is an execution guard, not a customer balance hold. Migration
+0015 adds partial unique indexes so only one processing withdrawal can exist
+per source wallet, separately for tenant and legacy ownership. The request
+identity is immutable; the only permitted status transition is from
+`processing` to `completed` or `failed`.
+
+Migration 0015 also installs database triggers that make ledger identity,
+ownership and monetary columns immutable, restrict lifecycle changes to the
+approved state graph, prevent replacement of a persisted transaction signature
+or completed response, and reject unsafe concurrent withdrawals. The migration
+fails before index creation if pre-existing duplicate in-flight reservations
+need reconciliation.
 
 ### Scanner and reconciliation tables
 
@@ -166,6 +178,13 @@ tenants; absence means disabled.
 6. A withdrawal timeout never releases the reservation while broadcast/finality
    is unknown.
 7. No table represents a partner customer available balance.
+8. At most one withdrawal intent may be `processing` per source wallet and
+   ownership domain. A signed/ambiguous intent holds the slot until reconciliation.
+9. Ledger identity and amount fields cannot be rewritten; transaction and
+   idempotency state transitions are checked by PostgreSQL triggers.
+10. The ledger evidence row and completed idempotency response are committed
+    atomically after broadcast. A failed post-broadcast commit leaves the
+    idempotency reservation in `processing` for reconciliation.
 
 ## 5. Retention and operations
 
