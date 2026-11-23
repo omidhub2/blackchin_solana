@@ -1,6 +1,6 @@
 import { Keypair } from '@solana/web3.js';
 import { connection, solanaNetwork, assertSolanaNetworkIdentity } from '../config/connection.js';
-import { sendSolWithSigner } from '../Solana/solTransfer.js';
+import { sendSolWithSigner, extractIncomingTransfers } from '../Solana/solTransfer.js';
 
 function zeroize(keypair) {
   if (!keypair) return;
@@ -70,13 +70,24 @@ try {
     throw new Error('Signed transaction identity was not preserved before broadcast');
   }
 
-  const [recipientBalance, signatureStatus] = await Promise.all([
+  const [recipientBalance, signatureStatus, parsedTransaction] = await Promise.all([
     connection.getBalance(recipient.publicKey, 'confirmed'),
-    connection.getSignatureStatuses([transfer.signature], { searchTransactionHistory: true })
+    connection.getSignatureStatuses([transfer.signature], { searchTransactionHistory: true }),
+    connection.getParsedTransaction(transfer.signature, {
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0
+    })
   ]);
+  const detectedDeposits = extractIncomingTransfers(
+    parsedTransaction,
+    recipient.publicKey.toBase58()
+  );
 
   if (recipientBalance !== 1_000_000) {
     throw new Error(`Unexpected recipient balance: ${recipientBalance} lamports`);
+  }
+  if (detectedDeposits.length !== 1 || detectedDeposits[0].lamports !== '1000000') {
+    throw new Error('The real Devnet transfer was not detected as exactly one incoming deposit');
   }
   if (signatureStatus.value[0]?.err) {
     throw new Error(`Devnet transfer status contains an error: ${JSON.stringify(signatureStatus.value[0].err)}`);
@@ -96,7 +107,8 @@ try {
     feeLamports: transfer.feeLamports,
     slot: transfer.slot,
     confirmationStatus: signatureStatus.value[0].confirmationStatus,
-    recipientBalanceLamports: recipientBalance
+    recipientBalanceLamports: recipientBalance,
+    detectedDeposit: detectedDeposits[0]
   }, null, 2) + '\n');
 } finally {
   zeroize(sender);
