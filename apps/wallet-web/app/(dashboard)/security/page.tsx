@@ -189,7 +189,10 @@ export default function SecurityPage() {
       maxDailyCount: Number(maxDailyCount),
       maxWeeklyCount: Number(maxWeeklyCount)
     }),
-    onSuccess: refreshPolicyData
+    onSuccess: async () => {
+      setEditingPolicyTenantId(null);
+      await refreshPolicyData();
+    }
   });
   const deletePolicy = useMutation({
     mutationFn: (id: string) => api.delete<{ tenantId: string; deleted: boolean }>(`/tenants/${id}/withdrawal-policy`),
@@ -268,7 +271,26 @@ export default function SecurityPage() {
             type="button"
             className="btn-secondary !px-3 !py-1.5 text-xs"
             onClick={() => {
+              setEditingPolicyTenantId(null);
               setTenantId(row.tenantId);
+            }}
+          >
+            View details
+          </button>
+          <button
+            type="button"
+            className="btn-secondary !px-3 !py-1.5 text-xs"
+            onClick={() => {
+              const currentPolicy = policy.data?.tenantId === row.tenantId ? policy.data : null;
+              setTenantId(row.tenantId);
+              if (currentPolicy) {
+                setEnabled(currentPolicy.enabled);
+                setMaxSingleLamports(currentPolicy.maxSingleLamports);
+                setMaxDailyLamports(currentPolicy.maxDailyLamports);
+                setMaxWeeklyLamports(currentPolicy.maxWeeklyLamports);
+                setMaxDailyCount(String(currentPolicy.maxDailyCount));
+                setMaxWeeklyCount(String(currentPolicy.maxWeeklyCount));
+              }
               setEditingPolicyTenantId(row.tenantId);
             }}
           >
