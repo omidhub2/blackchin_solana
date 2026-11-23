@@ -39,6 +39,7 @@ import {
 import { ACCOUNT_STATUSES } from '../../infrastructure/database/wallet-account.repository.js';
 import { emitEvent } from '../../infrastructure/database/webhook-outbox.repository.js';
 import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
+import { zeroizeKeypair } from '../../infrastructure/security/wallet-signer.js';
 
 const HD_WALLET_STATUSES = Object.freeze(['active', 'provisioning', 'disabled', 'archived']);
 const MAX_BATCH_SIZE = 50;
@@ -232,17 +233,21 @@ export function createTenantWalletService({
       if (wallet.status === 'archived') {
         throw conflict('HD wallet is archived and cannot be used', 'HD_WALLET_ARCHIVED');
       }
-      const mnemonic = decryptMnemonic(wallet);
-      const derived = deriveSolanaAccount(mnemonic, accountIndex);
-      const result = {
-        hdWalletId: String(hdWalletId),
-        accountIndex,
-        derivationPath: derived.derivationPath,
-        publicKey: derived.publicKey
-      };
-      derived.secretKey.fill(0);
-      derived.keypair.secretKey.fill(0);
-      return result;
+      let mnemonic = decryptMnemonic(wallet);
+      let derived;
+      try {
+        derived = deriveSolanaAccount(mnemonic, accountIndex);
+        return {
+          hdWalletId: String(hdWalletId),
+          accountIndex,
+          derivationPath: derived.derivationPath,
+          publicKey: derived.publicKey
+        };
+      } finally {
+        mnemonic = '';
+        derived?.secretKey?.fill(0);
+        zeroizeKeypair(derived?.keypair);
+      }
     },
 
     async createAccounts(tenantId, hdWalletId, { count = 1 } = {}) {
@@ -251,6 +256,8 @@ export function createTenantWalletService({
         throw conflict(`count must be an integer between 1 and ${MAX_BATCH_SIZE}`, 'INVALID_BATCH_SIZE');
       }
       const client = await db.connect();
+      let mnemonic = '';
+      const derived = [];
       try {
         await client.query('BEGIN');
         const allocation = await allocateAccountIndexesForTenant(client, tenantId, hdWalletId, count);
@@ -259,13 +266,10 @@ export function createTenantWalletService({
         if (hdWallet.status !== 'active') {
           throw conflict(`HD wallet is ${hdWallet.status} and cannot create new accounts`, 'HD_WALLET_NOT_ACTIVE');
         }
-        const mnemonic = decryptMnemonic(hdWallet);
-        const derived = indexes.map((accountIndex) => {
-          const account = deriveSolanaAccount(mnemonic, accountIndex);
-          account.secretKey.fill(0);
-          account.keypair.secretKey.fill(0);
-          return account;
-        });
+        mnemonic = decryptMnemonic(hdWallet);
+        for (const accountIndex of indexes) {
+          derived.push(deriveSolanaAccount(mnemonic, accountIndex));
+        }
         const accounts = await insertWalletAccountsForTenant(client, tenantId, derived.map((account) => ({
           hdWalletId,
           publicKey: account.publicKey,
@@ -311,6 +315,11 @@ export function createTenantWalletService({
         await client.query('ROLLBACK').catch(() => {});
         throw mapUniqueViolation(error);
       } finally {
+        mnemonic = '';
+        for (const account of derived) {
+          account.secretKey?.fill(0);
+          zeroizeKeypair(account.keypair);
+        }
         client.release();
       }
     },
@@ -357,8 +366,8 @@ export function createTenantWalletService({
         eventType: 'wallet.status_changed',
         tenantId,
         network: updated.network,
-        hdWalletId,
-        payload: { walletId: String(hdWalletId), status }
+        hdWalletId: updated.hdWalletId,
+        payload: { walletId: String(updated.hdWalletId), status }
       }, log);
       return updated;
     },
