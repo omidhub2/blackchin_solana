@@ -369,21 +369,24 @@ export function createSweeperService({
             });
             if (!ledger.created) throw new Error('Sweep ledger identity exists outside the expected scope');
           }
-          const completed = await client.query(
-            `UPDATE sweep_jobs
-                SET status = 'completed', updated_at = NOW()
-              WHERE id = $1 AND status = 'submitted' AND transaction_signature = $2
-              RETURNING *`,
-            [job.id, sent.signature]
-          );
-          if (completed.rowCount !== 1) throw new Error('Sweep job state changed before completion');
+          // A confirmed response is not finality. Persist the immutable
+          // ledger evidence but keep the job submitted until the reconciliation
+          // loop independently verifies finalized chain history.
           await recordSweepEvent(client, {
             jobId: job.id, tenantId, network,
-            outcome: 'completed', signature: sent.signature,
-            details: { amountLamports: amount.toString(), feeLamports: sent.feeLamports ?? null }
+            outcome: 'confirmed_waiting_finality', signature: sent.signature,
+            details: {
+              amountLamports: amount.toString(),
+              feeLamports: sent.feeLamports ?? null,
+              confirmationStatus: sent.confirmationStatus ?? commitment
+            }
           });
           await client.query('COMMIT');
-          completedRow = completed.rows[0];
+          completedRow = {
+            ...job,
+            status: 'submitted',
+            transaction_signature: sent.signature
+          };
         } catch (cause) {
           await client.query('ROLLBACK').catch(() => {});
           const error = new Error('Sweep may have been broadcast but durable ledger completion failed', { cause });
@@ -394,7 +397,7 @@ export function createSweeperService({
         } finally {
           client.release();
         }
-        log('sweep.completed', { jobId: String(job.id), signature: sent.signature, network });
+        log('sweep.confirmed_waiting_finality', { jobId: String(job.id), signature: sent.signature, network });
         return { replayed: false, job: mapJob(completedRow), transfer: sent };
       } catch (cause) {
         if (signaturePersisted) {
