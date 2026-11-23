@@ -75,5 +75,7 @@ export const api = {
   post: <T>(path: string, body: unknown = {}) =>
     request<T>(path, { method: 'POST', body }),
   patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'PATCH', body })
+    request<T>(path, { method: 'PATCH', body }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: 'PUT', body })
 };
