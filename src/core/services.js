@@ -132,3 +132,20 @@ export function createServices(overrides = {}) {
     webhookEndpoints
   });
 }
+
+/**
+ * Build a request-local service graph whose database dependency is the
+ * signed tenant-scoped facade. Never pass the control-plane pool here.
+ */
+export function createTenantRequestServices(baseServices, tenantDb) {
+  if (!baseServices?.deps || !tenantDb ||
+      typeof tenantDb.query !== 'function' || typeof tenantDb.connect !== 'function') {
+    throw new TypeError('Base services and a signed tenant database are required');
+  }
+
+  return createServices({
+    ...baseServices.deps,
+    db: tenantDb,
+    pool: tenantDb
+  });
+}
