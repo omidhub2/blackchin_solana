@@ -76,6 +76,29 @@ test('partner approval issuance requires its separate scope and is bound to auth
   } finally { await app.close(); }
 });
 
+test('partner approval issuance is forbidden without withdrawals:submit scope', async () => {
+  const h = harness(['withdrawals:approve']);
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tenant/withdrawal-approvals',
+      headers: {
+        'x-api-key': h.apiKey,
+        'idempotency-key': 'partner-approval-key-001'
+      },
+      payload: {
+        fromPublicKey: sender,
+        toPublicKey: recipient,
+        amountSol: '0.25',
+        approvalReference: 'partner-approval-001'
+      }
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(h.calls.length, 0);
+  } finally { await app.close(); }
+});
+
 test('partner approval issuance is forbidden without withdrawals:approve scope', async () => {
   const h = harness(['withdrawals:submit']);
   const app = buildServer({ logger: false, services: h.services });
