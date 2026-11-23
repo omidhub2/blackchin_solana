@@ -138,3 +138,41 @@ test('tenant service refuses missing tenant context before database access', asy
   );
   assert.equal(db.calls.length, 0);
 });
+
+
+test('tenant account status change records the correct parent HD wallet audit reference', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, values = []) {
+      calls.push({ sql, values });
+      if (sql.includes('UPDATE wallet_accounts')) {
+        return {
+          rows: [{
+            id: '77', hd_wallet_id: '101', public_key: '11111111111111111111111111111111',
+            account_index: 0, derivation_path: "m/44'/501'/0'/0'",
+            wallet_type: 'hd_child', network: 'devnet', status: 'disabled',
+            created_at: new Date(), updated_at: new Date(), tenant_id: '12'
+          }],
+          rowCount: 1
+        };
+      }
+      if (sql.includes('INSERT INTO operational_events')) {
+        return { rows: [{ id: '1', event_id: values[0] }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() { throw new Error('connect should not be used for status update'); }
+  };
+  const service = buildService(db);
+
+  const updated = await service.setAccountStatus(
+    '12', '11111111111111111111111111111111', 'disabled'
+  );
+
+  assert.equal(updated.hdWalletId, '101');
+  const event = calls.find((call) => call.sql.includes('INSERT INTO operational_events'));
+  assert.ok(event, 'status change should emit an operational event');
+  assert.equal(event.values[1], '12');
+  assert.equal(event.values[5], '101');
+  assert.equal(JSON.parse(event.values[6]).walletId, '101');
+});
