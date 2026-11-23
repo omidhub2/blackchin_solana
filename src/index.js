@@ -170,6 +170,7 @@ let worker;
 let reconciliationWorker;
 let withdrawalReconciliationWorker;
 let webhookWorker;
+let sweeperWorker;
 const webhookWorkerRef = { current: null };
 let shuttingDown = false;
 
