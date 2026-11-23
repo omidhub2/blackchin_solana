@@ -403,6 +403,9 @@ test('0016 grants deposit workers only public wallet metadata and scanner/reconc
   assert.match(sql, /deposit_reconciliation_events/i);
   assert.match(sql, /webhook_outbox/i);
   assert.match(sql, /operational_events/i);
+  assert.match(sql, /GRANT SELECT \(id, event_id\)/i);
+  assert.match(sql, /GRANT INSERT\s+ON public\.webhook_outbox, public\.operational_events/i);
+  assert.doesNotMatch(sql, /GRANT SELECT, INSERT\s+ON public\.webhook_outbox/i);
   assert.doesNotMatch(sql, /mnemonic_encrypted|mnemonic_iv|mnemonic_auth_tag/i);
   assert.doesNotMatch(sql, /GRANT .* ON public\.(tenants|tenant_api_credentials|api_idempotency_keys|hot_wallets)/i);
 });
