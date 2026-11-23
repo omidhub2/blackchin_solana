@@ -20,7 +20,7 @@ import {
   updateTransactionStatusForTenant,
   updateUnassignedTransactionStatus
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
-import { resolveWallet } from '../../infrastructure/security/wallet-signer.js';
+import { findAccountByPublicKey } from '../../infrastructure/database/wallet-account.repository.js';
 import { resolveDepositWalletForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
 import { emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
 import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
@@ -51,21 +51,50 @@ export function createDepositService({ db, rpc, network, commitment, log = () =>
       return resolveDepositWalletForTenant(db, tenantId, publicKey);
     }
 
-    const wallet = await resolveWallet(db, publicKey);
-    if (!wallet) return null;
+    // Scanner/API deposit verification needs public ownership metadata only.
+    // Do not load encrypted HD mnemonics through the general signing resolver.
+    const account = await findAccountByPublicKey(db, publicKey);
+    if (account) {
+      if (account.tenantId !== null && account.tenantId !== undefined) return null;
+      const parent = await db.query(
+        'SELECT status FROM hd_wallets WHERE id = $1 AND tenant_id IS NULL LIMIT 1',
+        [account.hdWalletId]
+      );
+      const parentStatus = parent.rows[0]?.status ?? null;
+      return {
+        publicKey: account.publicKey,
+        tenantId: null,
+        walletType: 'hd_child',
+        status: account.status,
+        effectiveStatus: account.status === 'active' && parentStatus === 'active'
+          ? 'active'
+          : (account.status === 'active' ? (parentStatus ?? 'missing') : account.status),
+        parentStatus,
+        network: account.network,
+        hdWalletId: account.hdWalletId,
+        accountIndex: account.accountIndex,
+        derivationPath: account.derivationPath
+      };
+    }
 
-    // Legacy/global deposit operations must not read or mutate a wallet that
-    // has an explicit tenant owner. NULL-tenant legacy wallets remain supported.
-    const tenantOwner = await db.query(
-      `SELECT tenant_id FROM wallet_accounts
-       WHERE public_key = $1 AND tenant_id IS NOT NULL
-       UNION ALL
-       SELECT tenant_id FROM wallets
-       WHERE public_key = $1 AND tenant_id IS NOT NULL
-       LIMIT 1`,
+    const legacy = await db.query(
+      'SELECT public_key, tenant_id FROM wallets WHERE public_key = $1 LIMIT 1',
       [publicKey]
     );
-    return tenantOwner.rows.length === 0 ? wallet : null;
+    const row = legacy.rows[0];
+    if (!row || row.tenant_id !== null) return null;
+    return {
+      publicKey: row.public_key,
+      tenantId: null,
+      walletType: 'standalone',
+      status: 'active',
+      effectiveStatus: 'active',
+      parentStatus: null,
+      network: null,
+      hdWalletId: null,
+      accountIndex: null,
+      derivationPath: null
+    };
   }
 
   async function findDeposit(signature, publicKey, tenantId = null) {
