@@ -32,11 +32,72 @@ function harness(scopes = ['withdrawals:estimate', 'withdrawals:submit']) {
     async list(input) { calls.push(['list', input]); return { items: [], ...input }; },
     async get(input) { calls.push(['get', input]); return { status: 'processing', ...input }; }
   };
-  return { apiKey, calls, services: { deps: { db }, tenantWithdrawals } };
+  const tenantWithdrawalPolicy = {
+    async issueApproval(input) {
+      calls.push(['approval', input]);
+      return { ...input, status: 'approved', replayed: false };
+    }
+  };
+  return { apiKey, calls, services: { deps: { db, network: 'devnet' }, tenantWithdrawals, tenantWithdrawalPolicy } };
 }
 
 const sender = Keypair.generate().publicKey.toBase58();
 const recipient = Keypair.generate().publicKey.toBase58();
+
+test('partner approval issuance requires its separate scope and is bound to authenticated tenant credential', async () => {
+  const h = harness(['withdrawals:submit', 'withdrawals:approve']);
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tenant/withdrawal-approvals',
+      headers: {
+        'x-api-key': h.apiKey,
+        'idempotency-key': 'partner-approval-key-001'
+      },
+      payload: {
+        fromPublicKey: sender,
+        toPublicKey: recipient,
+        amountSol: '0.25',
+        approvalReference: 'partner-approval-001',
+        expiresInSeconds: 300
+      }
+    });
+    assert.equal(response.statusCode, 201);
+    const issued = h.calls.find(([kind]) => kind === 'approval');
+    assert.equal(issued[1].tenantId, '42');
+    assert.equal(issued[1].credentialId, 'credential-1');
+    assert.equal(issued[1].amountLamports, '250000000');
+    assert.equal(issued[1].network, 'devnet');
+    assert.equal(issued[1].issuer, 'tenant_credential:credential-1');
+    assert.equal(issued[1].issuerEventId, 'partner-approval-key-001');
+    assert.equal(issued[1].requireApprovalScope, true);
+    assert.match(issued[1].requestHash, /^[a-f0-9]{64}$/);
+  } finally { await app.close(); }
+});
+
+test('partner approval issuance is forbidden without withdrawals:approve scope', async () => {
+  const h = harness(['withdrawals:submit']);
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tenant/withdrawal-approvals',
+      headers: {
+        'x-api-key': h.apiKey,
+        'idempotency-key': 'partner-approval-key-001'
+      },
+      payload: {
+        fromPublicKey: sender,
+        toPublicKey: recipient,
+        amountSol: '0.25',
+        approvalReference: 'partner-approval-001'
+      }
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(h.calls.length, 0);
+  } finally { await app.close(); }
+});
 
 test('tenant withdrawal estimate uses authenticated tenant identity', async () => {
   const h = harness();
