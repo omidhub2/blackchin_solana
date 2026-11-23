@@ -18,7 +18,7 @@ npm test
 npm run check:imports
 ```
 
-The current API is a single-credential trusted-backend service. Do not expose it as a public multi-tenant partner API until the tenant-security requirements in `SECURITY.md` are implemented.
+The API now has tenant-scoped partner credentials and a fail-closed tenant withdrawal policy control plane. Do not expose production endpoints or enable mainnet withdrawals until the remaining production gates in `SECURITY.md` are independently verified.
 
 ## 2. Configuration
 
@@ -67,7 +67,7 @@ Before public partner onboarding:
 
 Migrations are ordered, checksum-verified and applied in a transaction per file. Never edit an applied migration. Back up before applying new migrations. Test migrations against a disposable PostgreSQL database and restore a backup in staging.
 
-Migration `0012_tenant_withdrawal_policy_foundation.sql` adds disabled-by-default tenant withdrawal policy, destination allowlist, credential-bound approval and append-only decision audit tables. It does not authorize withdrawals or create policies for existing tenants. Approval issuance must come from a separately authenticated control-plane integration; do not grant the API runtime broad policy/approval write access.\n\nMigration `0011_tenant_idempotency_namespace.sql` separates per-tenant idempotency keys from the legacy NULL-tenant namespace and records the authenticated credential plus partner approval reference for tenant withdrawals. Apply it only after a backup and migration review. Tenant withdrawal submission remains disabled until a trusted `tenantWithdrawalPolicy.authorize` provider is deployed and verified.
+Migration `0012_tenant_withdrawal_policy_foundation.sql` adds disabled-by-default tenant withdrawal policy, destination allowlist, credential-bound approval and append-only decision audit tables. The runtime policy provider and dashboard control-plane endpoints are implemented. Existing tenants remain disabled until an admin configures positive limits and explicitly unfreezes the policy. Approval issuance requires an active policy, active credential with `withdrawals:submit`, active HD child wallet and second-admin-approved destination. Policy edits/freeze revoke unused approvals.\n\nMigration `0011_tenant_idempotency_namespace.sql` separates per-tenant idempotency keys from the legacy NULL-tenant namespace and records the authenticated credential plus partner approval reference for tenant withdrawals. Apply migrations only after a backup and migration review. Verify applied migration checksums and exercise the complete policy/approval flow against a disposable PostgreSQL database before staging.
 
 For tenancy backfills, do not infer ownership from wallet labels or transaction history. Map existing data to a tenant only with verified evidence; otherwise quarantine it and prevent signing until an operator resolves ownership.
 
