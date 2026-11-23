@@ -63,6 +63,46 @@ const webhookDeliveryEnabled = process.env.WEBHOOK_DELIVERY_ENABLED === 'true';
 const webhookDeliveryIntervalMs = Number(process.env.WEBHOOK_DELIVERY_INTERVAL_MS || 5_000);
 const legacyWebhookEndpoint = process.env.WEBHOOK_ENDPOINT || null;
 const legacyWebhookSecret = process.env.WEBHOOK_SECRET || null;
+const depositWorkersEnabled = scannerEnabled || reconciliationEnabled;
+const depositWorkerDatabaseUrl = process.env.DEPOSIT_WORKER_DATABASE_URL || null;
+let depositWorkerPool = null;
+
+if (depositWorkersEnabled) {
+  if (!depositWorkerDatabaseUrl) {
+    throw new Error('DEPOSIT_WORKER_DATABASE_URL is required when the deposit scanner or deposit reconciliation worker is enabled');
+  }
+  let workerUrl;
+  try {
+    workerUrl = new URL(depositWorkerDatabaseUrl);
+  } catch (error) {
+    throw new Error('DEPOSIT_WORKER_DATABASE_URL is not a valid URL', { cause: error });
+  }
+  if (!['postgres:', 'postgresql:'].includes(workerUrl.protocol) ||
+      !workerUrl.hostname || !workerUrl.username || !workerUrl.pathname || workerUrl.pathname === '/') {
+    throw new Error('DEPOSIT_WORKER_DATABASE_URL must include a PostgreSQL host, username and database name');
+  }
+  const workerHost = workerUrl.hostname.replace(/^\\[|\\]$/g, '');
+  if (!['localhost', '127.0.0.1', '::1'].includes(workerHost) &&
+      workerUrl.searchParams.get('sslmode') !== 'verify-full') {
+    throw new Error('Remote DEPOSIT_WORKER_DATABASE_URL must explicitly use sslmode=verify-full');
+  }
+  const pgModule = await import('pg');
+  depositWorkerPool = new pgModule.default.Pool({
+    connectionString: depositWorkerDatabaseUrl,
+    max: 8,
+    min: 0,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+    keepAlive: true,
+    application_name: 'blackchin-deposit-worker'
+  });
+  depositWorkerPool.on('error', (error) => {
+    console.error('[DEPOSIT WORKER POSTGRESQL POOL ERROR]', {
+      code: error.code ?? 'UNKNOWN',
+      message: error.message
+    });
+  });
+}
 
 if (!Number.isSafeInteger(scannerIntervalMs) || scannerIntervalMs < 1_000) {
   throw new Error('DEPOSIT_SCANNER_INTERVAL_MS must be an integer >= 1000');
@@ -105,6 +145,7 @@ async function shutdown(signal) {
     if (worker) await worker.stop();
     if (server) await server.close();
     if (tenantPool) await tenantPool.end();
+    if (depositWorkerPool) await depositWorkerPool.end();
     await disconnectPostgres();
     process.exitCode = 0;
   } catch (error) {
@@ -132,6 +173,13 @@ try {
     tenantContextSigner = createTenantContextSigner(tenantContextKey);
   }
 
+  if (depositWorkerPool) {
+    const { assertDepositWorkerRuntimeRole } =
+      await import('./infrastructure/security/deposit-worker-role.js');
+    const workerIdentity = await assertDepositWorkerRuntimeRole(depositWorkerPool);
+    console.log('[DEPOSIT WORKER DATABASE READY]', workerIdentity);
+  }
+
   // Fail fast if the schema migrations have not been applied.
   await pool.query('SELECT idempotency_key FROM api_idempotency_keys LIMIT 0');
   await pool.query('SELECT next_account_index FROM hd_wallets LIMIT 0');
@@ -141,6 +189,7 @@ try {
   await pool.query('SELECT event_id FROM webhook_outbox LIMIT 0');
   await pool.query('SELECT bucket_key FROM rate_limit_counters LIMIT 0');
   await pool.query('SELECT last_transaction_id FROM deposit_reconciliation_cursors LIMIT 0');
+  await pool.query('SELECT checked_at FROM deposit_reconciliation_events LIMIT 0');
   await pool.query('SELECT last_id FROM withdrawal_reconciliation_cursors LIMIT 0');
   await pool.query('SELECT tenant_credential_id, approval_reference FROM api_idempotency_keys LIMIT 0');
   await pool.query('SELECT enabled, emergency_frozen, policy_version FROM tenant_withdrawal_policies LIMIT 0');
@@ -163,6 +212,9 @@ try {
   // Creating services validates ENCRYPTION_KEY and fails closed before the
   // port is opened.
   const services = createServices({ pool, webhookWorkerRef });
+  const depositWorkerServices = depositWorkerPool
+    ? createServices({ db: depositWorkerPool, pool: depositWorkerPool })
+    : null;
 
   if (webhookDeliveryEnabled) {
     const { createWebhookDeliveryWorker } = await import('./workers/webhook-delivery.worker.js');
@@ -243,9 +295,9 @@ try {
 
   if (scannerEnabled) {
     worker = createDepositScannerWorker({
-      scanner: services.depositScanner,
-      cursors: services.deps.cursors,
-      pool,
+      scanner: depositWorkerServices.depositScanner,
+      cursors: depositWorkerServices.deps.cursors,
+      pool: depositWorkerPool,
       network: scannerNetwork,
       scope: scannerScope,
       intervalMs: scannerIntervalMs,
@@ -255,11 +307,11 @@ try {
 
   if (reconciliationEnabled) {
     reconciliationWorker = createDepositScannerWorker({
-      scanner: services.depositReconciliation,
+      scanner: depositWorkerServices.depositReconciliation,
       cursors: {
         acquireScannerLock: (client, { network }) => acquireReconciliationLock(client, network)
       },
-      pool,
+      pool: depositWorkerPool,
       network: scannerNetwork,
       scope: 'deposit-reconciliation',
       intervalMs: reconciliationIntervalMs,
@@ -342,6 +394,7 @@ try {
 } catch (error) {
   console.error('[API STARTUP FAILED]', error.message);
   if (tenantPool) await tenantPool.end().catch(() => { });
+  if (depositWorkerPool) await depositWorkerPool.end().catch(() => { });
   await disconnectPostgres().catch(() => { });
   process.exitCode = 1;
 }
