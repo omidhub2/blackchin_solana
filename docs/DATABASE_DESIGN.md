@@ -44,12 +44,32 @@ Not allowed:
 | 0010 | Tenant attribution for withdrawal reconciliation evidence |
 | 0011 | Tenant-scoped idempotency namespace and credential/approval binding |
 | 0012 | Fail-closed withdrawal policy, destination allowlist, approvals, policy audit |
-| 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |
+| 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |\n| 0014 | HMAC-verified tenant context, restricted runtime role and PostgreSQL row-level policies |
 
 Migrations are forward-only and checksum-verified. Never edit an applied
 migration.
 
-## 3. Core tables
+## 3. Tenant RLS boundary
+
+Migration 0014 creates the NOLOGIN role `blackchin_tenant_runtime`, a private
+HMAC verification secret and `private.current_tenant_id()`. Tenant-owned
+operational tables use RLS policies whose USING and WITH CHECK predicates
+require the signed tenant context. The function revalidates tenant and
+credential lifecycle state on every statement.
+
+The API's tenant pool must authenticate as a separate non-superuser,
+non-BYPASSRLS login that is granted membership in `blackchin_tenant_runtime`.
+The API executes `SET LOCAL ROLE` and signed context inside each transaction.
+The privileged control-plane pool is used only for authentication, secret
+provisioning and background/administrative work. Never use the control-plane
+pool for tenant service queries.
+
+RLS is enabled, not forced, on purpose: the migration/table owner and
+control-plane workers retain their explicit administrative path. Tenant API
+connections must never use that owner login. Legacy NULL-tenant records remain
+unassigned and invisible to the tenant runtime role.
+
+## 4. Core tables
 
 ### `tenants`
 
