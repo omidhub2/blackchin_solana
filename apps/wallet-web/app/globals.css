@@ -64,7 +64,7 @@ body {
   }
 
   .field-label {
-    @apply mb-2 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400;
+    @apply mb-2 block text-xs font-semibold uppercase tracking-[0.1em] text-slate-400;
   }
 
   .input {
@@ -99,7 +99,7 @@ body {
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold;
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold;
   }
 
   .table-shell {
@@ -107,11 +107,11 @@ body {
   }
 
   .table {
-    @apply w-full min-w-[720px] border-collapse text-sm;
+    @apply w-full min-w-[720px] border-collapse text-[15px];
   }
 
   .table thead th {
-    @apply border-b border-white/[0.09] bg-white/[0.025] px-4 py-4 text-start text-[10px] font-bold uppercase tracking-[0.13em] text-slate-400;
+    @apply border-b border-white/[0.09] bg-white/[0.025] px-4 py-4 text-start text-[11px] font-bold uppercase tracking-[0.11em] text-slate-400;
   }
 
   .table tbody td {
