@@ -410,29 +410,80 @@ test('a signing failure marks the reservation failed and allows no replay', asyn
   );
 });
 
-test('a completed broadcast with a lost DB write returns the signature and keeps the key locked', async () => {
+test('a completed broadcast with a lost DB write fails closed and keeps the key locked for reconciliation', async () => {
   const h = buildWithdrawalHarness();
   h.failIdempotency();
 
   const originalError = console.error;
-  console.error = () => { };
-
-  let result;
+  console.error = () => {};
 
   try {
-    result = await h.service.submit({
+    await assert.rejects(
+      () => h.service.submit({
+        idempotencyKey: KEY,
+        fromPublicKey: h.account.public_key,
+        toPublicKey: DESTINATION,
+        amountSol: '0.1',
+        approved: true
+      }),
+      (error) => error.code === 'WITHDRAWAL_RECONCILIATION_REQUIRED'
+        && error.statusCode === 503
+        && error.signature === SENT_SIGNATURE
+        && error.idempotencyKey === KEY
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(h.idempotency.get(KEY).status, 'processing');
+  assert.equal(h.idempotency.get(KEY).transaction_signature, SENT_SIGNATURE);
+  assert.equal(h.transactions.length, 1, 'ledger insert may have occurred inside the rolled-back transaction');
+  await assert.rejects(
+    () => h.service.submit({
       idempotencyKey: KEY,
       fromPublicKey: h.account.public_key,
       toPublicKey: DESTINATION,
       amountSol: '0.1',
       approved: true
-    });
+    }),
+    (error) => error.code === 'IDEMPOTENCY_IN_PROGRESS'
+  );
+  assert.equal(h.rpcCalls.filter(([name]) => name === 'send').length, 1);
+});
+
+test('a post-broadcast DB pool connection failure is reported as reconciliation-required', async () => {
+  const h = buildWithdrawalHarness();
+  const originalConnect = h.pool.connect.bind(h.pool);
+  let connections = 0;
+  h.pool.connect = async () => {
+    connections += 1;
+    if (connections === 2) throw new Error('pool unavailable after broadcast');
+    return originalConnect();
+  };
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(
+      () => h.service.submit({
+        idempotencyKey: KEY,
+        fromPublicKey: h.account.public_key,
+        toPublicKey: DESTINATION,
+        amountSol: '0.1',
+        approved: true
+      }),
+      (error) => error.code === 'WITHDRAWAL_RECONCILIATION_REQUIRED'
+        && error.statusCode === 503
+        && error.signature === SENT_SIGNATURE
+    );
   } finally {
     console.error = originalError;
   }
 
-  assert.equal(result.signature, SENT_SIGNATURE);
+  assert.equal(connections, 2);
   assert.equal(h.idempotency.get(KEY).status, 'processing');
+  assert.equal(h.idempotency.get(KEY).transaction_signature, SENT_SIGNATURE);
+  assert.equal(h.rpcCalls.filter(([name]) => name === 'send').length, 1);
 });
 
 test('inactive or unknown source wallets are rejected', async () => {
