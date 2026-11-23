@@ -472,10 +472,7 @@ try {
 
   const health = createHealthService({
     pool,
-    additionalPools: {
-      tenant: tenantPool,
-      depositWorker: depositWorkerPool
-    },
+    additionalPools: { tenant: tenantPool, depositWorker: depositWorkerPool, sweeper: sweeperPool },
     metrics,
     rpc: services.deps.rpc,
     rpcRequired: process.env.HEALTH_RPC_REQUIRED !== 'false',
@@ -487,7 +484,6 @@ try {
     withdrawalReconciliationEnabled,
     webhookWorker,
     webhookDeliveryEnabled,
-    additionalPools: { tenant: tenantPool, depositWorker: depositWorkerPool, sweeper: sweeperPool },
     sweeperWorker,
     sweeperEnabled,
     network: scannerNetwork,
