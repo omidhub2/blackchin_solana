@@ -27,7 +27,6 @@ export function StatCard({
 
   return (
     <div className="panel panel-hover relative overflow-hidden p-5 md:p-6">
-      <div className={clsx('pointer-events-none absolute -right-8 -top-10 h-36 w-36 rounded-full bg-gradient-to-br opacity-80 blur-3xl', accents[accent])} />
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
