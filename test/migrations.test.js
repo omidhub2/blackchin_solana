@@ -354,6 +354,7 @@ test('0014 installs signed tenant context validation and restrictive RLS policie
   assert.match(sql, /CREATE ROLE blackchin_tenant_runtime/i);
   assert.match(sql, /NOSUPERUSER[\s\S]*NOBYPASSRLS/i);
   assert.match(sql, /ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /AS RESTRICTIVE FOR ALL TO blackchin_tenant_runtime/i);
   assert.match(sql, /USING \(tenant_id = private\.current_tenant_id\(\)\)/i);
   assert.match(sql, /WITH CHECK \(tenant_id = private\.current_tenant_id\(\)\)/i);
   assert.doesNotMatch(sql, /FORCE ROW LEVEL SECURITY/i);
