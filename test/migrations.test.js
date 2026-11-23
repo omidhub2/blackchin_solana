@@ -172,6 +172,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0011'));
   assert.ok(versions.includes('0012'));
   assert.ok(versions.includes('0013'));
+  assert.ok(versions.includes('0014'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -335,4 +336,27 @@ test('0013 adds dashboard identity, durable operational events, tenant webhooks 
   assert.match(sql, /prevent_hot_wallet_rebinding/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
   assert.doesNotMatch(sql, /(?:customer|partner)_balance/i);
+});
+
+test('0014 installs signed tenant context validation and restrictive RLS policies', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0014_signed_tenant_rls.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS private\.tenant_context_secrets/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION private\.current_tenant_id\(\)/i);
+  assert.match(sql, /SECURITY DEFINER/i);
+  assert.match(sql, /public\.hmac\(/i);
+  assert.match(sql, /c\.status = 'active'/i);
+  assert.match(sql, /c\.revoked_at IS NULL/i);
+  assert.match(sql, /c\.expires_at IS NULL OR c\.expires_at > statement_timestamp\(\)/i);
+  assert.match(sql, /CREATE ROLE blackchin_tenant_runtime/i);
+  assert.match(sql, /NOSUPERUSER[\s\S]*NOBYPASSRLS/i);
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /USING \(tenant_id = private\.current_tenant_id\(\)\)/i);
+  assert.match(sql, /WITH CHECK \(tenant_id = private\.current_tenant_id\(\)\)/i);
+  assert.doesNotMatch(sql, /FORCE ROW LEVEL SECURITY/i);
+  assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)[\s\S]*SET tenant_id/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
 });
