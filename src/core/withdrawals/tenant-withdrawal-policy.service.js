@@ -621,7 +621,7 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
               WHERE tenant_id = $1 AND network = $2 AND asset = 'SOL'
                 AND destination_public_key = $3 AND status = 'active'
               LIMIT 1
-              FOR KEY SHARE`,
+              FOR SHARE`,
             [tenantId, network, toPublicKey]
           );
 
