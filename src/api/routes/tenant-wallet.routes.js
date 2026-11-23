@@ -14,6 +14,7 @@ import {
 import { badRequest } from '../../core/errors.js';
 import { rateLimitHook } from '../middleware/rate-limit.js';
 import { MAX_BATCH_SIZE } from '../../core/wallets/child-wallet.service.js';
+import { recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
 import { hashTenantWithdrawalRequest, solToLamports } from '../../core/withdrawals/tenant-withdrawal-policy.service.js';
 
 const CREATE_FIELDS = ['label', 'ownerId'];
@@ -160,6 +161,21 @@ export async function tenantWalletRoutes(app) {
       issuerEventId: requireIdempotencyKey(request.headers['idempotency-key']),
       requireApprovalScope: true
     });
+    if (!approval.replayed) {
+      await recordOperationalEventSafe(appServices(request).deps.db, {
+        eventType: 'tenant_withdrawal.approval_issued',
+        tenantId: approval.tenantId,
+        network: approval.network,
+        walletPublicKey: approval.walletPublicKey,
+        payload: {
+          credentialId: approval.credentialId,
+          approvalReference: approval.approvalReference,
+          destinationPublicKey: approval.destinationPublicKey,
+          amountLamports: approval.amountLamports,
+          expiresAt: approval.expiresAt
+        }
+      });
+    }
     reply.header('Cache-Control', 'no-store');
     return reply.code(approval.replayed ? 200 : 201).send({ approval });
   });
