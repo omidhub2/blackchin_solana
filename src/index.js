@@ -183,6 +183,7 @@ async function shutdown(signal) {
     // Stop background work first so no scan writes after the pool starts
     // draining, then close HTTP, then the pool.
     if (webhookWorker) await webhookWorker.stop();
+    if (sweeperWorker) await sweeperWorker.stop();
     if (withdrawalReconciliationWorker) await withdrawalReconciliationWorker.stop();
     if (reconciliationWorker) await reconciliationWorker.stop();
     if (worker) await worker.stop();
