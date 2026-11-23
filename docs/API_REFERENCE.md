@@ -194,7 +194,7 @@ Scope: `withdrawals:estimate`. Body: `{ "fromPublicKey", "toPublicKey", "amountS
 
 ### `POST /api/v1/tenant/withdrawals`
 
-Scope: `withdrawals:write`. Requires an `Idempotency-Key` header and body `{ "fromPublicKey", "toPublicKey", "amountSol", "approvalReference" }`. The approval reference must be verified by the configured tenant withdrawal policy. Submit is rate-limited to 10/min and estimate to 30/min per client IP. The service fails closed with `503 WITHDRAWAL_POLICY_UNAVAILABLE` when no policy provider is configured, and rejects denied approvals before reserving an idempotency key or signing.
+Scope: `withdrawals:write`. Requires an `Idempotency-Key` header and body `{ "fromPublicKey", "toPublicKey", "amountSol", "approvalReference" }`. The approval reference must be verified by the configured tenant withdrawal policy. Submit is rate-limited to 10/min and estimate to 30/min per client IP. The service reserves the tenant-scoped idempotency key before policy authorization so a completed retry can replay without re-consuming its one-time approval. A denied authorization marks the reservation failed and never signs. Missing policy rows, disabled/frozen policies, invalid approvals, non-allowlisted destinations and exceeded limits all fail closed.
 
 Tenant idempotency keys are unique per tenant; legacy `tenant_id IS NULL` keys retain their separate globally unique namespace. Signed transaction signatures are persisted before broadcast. Ambiguous outcomes remain processing for reconciliation and are never blindly rebroadcast. The tenant ledger insert and idempotency completion are committed atomically.
 
@@ -301,6 +301,9 @@ Base path: `/api/v1/dashboard`. Authentication uses the
 | `GET` | `/credentials` | API credentials |
 | `GET` | `/tenants` | Tenant list |
 | `GET` | `/security` | Policies, credentials and hot wallets |
+| `GET` | `/tenants/:tenantId/withdrawal-policy` | Tenant withdrawal policy; null means no policy and withdrawals are disabled |
+| `GET` | `/tenants/:tenantId/withdrawal-destinations` | Tenant SOL withdrawal destination allowlist |
+| `GET` | `/tenants/:tenantId/withdrawal-approvals` | Recent tenant approval records (maximum 100) |
 | `GET` | `/network` | RPC probe, scanner cursors and asset scope |
 | `GET` | `/stream` | SSE snapshot + operational event stream |
 
@@ -323,8 +326,21 @@ Base path: `/api/v1/dashboard`. Authentication uses the
 
 | Method | Path | Notes |
 |---|---|---|
+| `PUT` | `/tenants/:tenantId/withdrawal-policy` | Configure enablement and positive single/daily/weekly lamport + count limits; every policy edit freezes withdrawals and invalidates unused approvals |
+| `POST` | `/tenants/:tenantId/withdrawal-policy/unfreeze` | Explicitly unfreeze an enabled policy; unused approvals are revoked first |
+| `POST` | `/tenants/:tenantId/withdrawal-destinations` | Add a pending native-SOL destination |
+| `POST` | `/tenants/:tenantId/withdrawal-destinations/:destinationId/activate` | Activate only with a different second admin than the creator |
+| `POST` | `/tenants/:tenantId/withdrawal-destinations/:destinationId/revoke` | Revoke a pending or active destination |
+| `POST` | `/tenants/:tenantId/withdrawal-approvals` | Issue a one-time approval bound to active tenant credential, HD child wallet, active destination, network and exact lamport amount; expires within 15 minutes |
+| `POST` | `/tenants/:tenantId/withdrawal-approvals/:approvalReference/revoke` | Revoke an unused approval |
 | `POST` | `/tenants/:tenantId/credentials` | Issue a scoped tenant API key; returned once |
 | `POST` | `/credentials/:credentialId/revoke` | Revoke an active credential |
+
+Operators may emergency-freeze a tenant policy with
+`POST /tenants/:tenantId/withdrawal-policy/freeze`; only admins may unfreeze
+or issue/revoke approvals. All dashboard mutations require the session-bound
+CSRF token. Policy limits must be positive; zero is not treated as unlimited.
+Velocity is serialized per tenant under a policy-row lock and counted in UTC.
 
 ### SSE protocol
 
