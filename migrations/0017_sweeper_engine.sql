@@ -151,6 +151,14 @@ CREATE TABLE IF NOT EXISTS sweep_funding_daily_usage (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sweep_funding_daily_scope
     ON sweep_funding_daily_usage(COALESCE(tenant_id, 0), network, funding_wallet_public_key, usage_date);
 
+-- Sweeps are a distinct outbound ledger operation. Preserve the existing
+-- deposit/withdrawal values while allowing native SOL sweep records.
+ALTER TABLE public.blockchain_transactions
+    DROP CONSTRAINT IF EXISTS blockchain_transactions_direction_check;
+ALTER TABLE public.blockchain_transactions
+    ADD CONSTRAINT blockchain_transactions_direction_check
+    CHECK (direction IN ('deposit', 'withdrawal', 'sweep'));
+
 -- Sweeper signing is deliberately more privileged than deposit scanning:
 -- it can read encrypted HD root material, but cannot read legacy private-key
 -- ciphertext, tenant credentials, dashboard sessions or webhook payloads.
@@ -186,11 +194,12 @@ GRANT SELECT, INSERT, UPDATE
     TO blackchin_sweeper_runtime;
 
 GRANT SELECT, INSERT
-    ON public.sweep_events
+    ON public.sweep_events, public.blockchain_transactions
     TO blackchin_sweeper_runtime;
 
 GRANT USAGE, SELECT ON SEQUENCE
-    public.sweep_policies_id_seq, public.sweep_jobs_id_seq, public.sweep_events_id_seq
+    public.sweep_policies_id_seq, public.sweep_jobs_id_seq, public.sweep_events_id_seq,
+    public.sweep_funding_daily_usage_id_seq, public.blockchain_transactions_id_seq
     TO blackchin_sweeper_runtime;
 
 COMMENT ON ROLE blackchin_sweeper_runtime IS
