@@ -39,6 +39,8 @@ DECLARE
     claims JSONB;
     secret BYTEA;
     expected_signature TEXT;
+    signature_diff INTEGER := 0;
+    character_index INTEGER;
     issued_at BIGINT;
     tenant_value BIGINT;
     credential_value BIGINT;
@@ -64,12 +66,18 @@ BEGIN
         public.hmac(convert_to(context_text, 'UTF8'), secret, 'sha256'),
         'hex'
     );
-    IF expected_signature <> signature_text THEN
+    -- Compare every hex character rather than exiting on the first mismatch.
+    FOR character_index IN 1..64 LOOP
+        signature_diff := signature_diff |
+            (ascii(substr(expected_signature, character_index, 1)) #
+             ascii(substr(signature_text, character_index, 1)));
+    END LOOP;
+    IF signature_diff <> 0 THEN
         RETURN NULL;
     END IF;
 
     claims := context_text::jsonb;
-    IF claims->>'version' <> '1'
+    IF claims->>'version' IS DISTINCT FROM '1'
        OR COALESCE(claims->>'nonce', '') !~ '^[a-f0-9]{32}$'
        OR COALESCE(claims->>'tenantId', '') !~ '^[1-9][0-9]*$'
        OR COALESCE(claims->>'credentialId', '') !~ '^[1-9][0-9]*$'
@@ -132,7 +140,30 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     public.hot_wallets
 TO blackchin_tenant_runtime;
 
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO blackchin_tenant_runtime;
+DO $sequences$
+DECLARE
+    table_name TEXT;
+    sequence_name TEXT;
+    tenant_tables TEXT[] := ARRAY[
+        'wallets', 'hd_wallets', 'wallet_accounts',
+        'blockchain_transactions', 'api_idempotency_keys',
+        'webhook_outbox', 'withdrawal_reconciliation_events',
+        'tenant_withdrawal_destinations', 'tenant_withdrawal_approvals',
+        'tenant_withdrawal_policy_events', 'operational_events',
+        'tenant_webhook_endpoints', 'hot_wallets'
+    ];
+BEGIN
+    FOREACH table_name IN ARRAY tenant_tables LOOP
+        sequence_name := pg_get_serial_sequence('public.' || table_name, 'id');
+        IF sequence_name IS NOT NULL THEN
+            EXECUTE format(
+                'GRANT USAGE, SELECT ON SEQUENCE %s TO blackchin_tenant_runtime',
+                sequence_name
+            );
+        END IF;
+    END LOOP;
+END;
+$sequences$;
 
 DO $policies$
 DECLARE
