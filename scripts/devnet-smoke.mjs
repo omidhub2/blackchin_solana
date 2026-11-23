@@ -29,7 +29,7 @@ if (typeof encodedSecret !== 'string' || encodedSecret.length === 0) {
     slot,
     latestBlockhash,
     transfer: 'SKIPPED_NO_DEVNET_SMOKE_SECRET'
-  }, null, 2) + '\\n');
+  }, null, 2) + '\n');
   process.exit(0);
 }
 
