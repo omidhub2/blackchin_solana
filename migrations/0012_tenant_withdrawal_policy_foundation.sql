@@ -1,7 +1,9 @@
 -- Tenant withdrawal policy data model (Solana native SOL only).
--- All tenants start disabled. This migration does not grant the API role
--- permission to create approvals or modify policy; a separately authenticated
--- control-plane/admin workflow and DB grants are required before use.
+-- All tenants start disabled. This migration creates schema only: it does
+-- not create policy rows or grant database privileges. Runtime mutations are
+-- guarded by dashboard roles and the separate partner withdrawals:approve
+-- scope. Production must configure least-privilege DB roles for migration,
+-- API and control-plane operations before enabling mainnet withdrawals.
 
 CREATE TABLE IF NOT EXISTS tenant_withdrawal_policies (
     tenant_id BIGINT PRIMARY KEY REFERENCES tenants(id) ON DELETE RESTRICT,
