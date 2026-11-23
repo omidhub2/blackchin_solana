@@ -243,13 +243,13 @@ export async function dashboardRoutes(app) {
       tenantId: parseTenantId(request.params.tenantId),
       enabled: body.enabled,
       maxSingleLamports: requireString(String(body.maxSingleLamports ?? ''), 'maxSingleLamports', {
-        min: 1, max: 30, pattern: /^[1-9]\\d{0,29}$/
+        min: 1, max: 30, pattern: /^[1-9]\d{0,29}$/
       }),
       maxDailyLamports: requireString(String(body.maxDailyLamports ?? ''), 'maxDailyLamports', {
-        min: 1, max: 30, pattern: /^[1-9]\\d{0,29}$/
+        min: 1, max: 30, pattern: /^[1-9]\d{0,29}$/
       }),
       maxWeeklyLamports: requireString(String(body.maxWeeklyLamports ?? ''), 'maxWeeklyLamports', {
-        min: 1, max: 30, pattern: /^[1-9]\\d{0,29}$/
+        min: 1, max: 30, pattern: /^[1-9]\d{0,29}$/
       }),
       maxDailyCount: requireSafeInteger(Number(body.maxDailyCount), 'maxDailyCount', { min: 1, max: 1_000_000 }),
       maxWeeklyCount: requireSafeInteger(Number(body.maxWeeklyCount), 'maxWeeklyCount', { min: 1, max: 1_000_000 }),
