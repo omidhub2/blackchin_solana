@@ -38,6 +38,35 @@
   tenant guard. The restrictive policy is ANDed with any future permissive
   policy, preventing an accidentally broad policy from overriding isolation.
 
+### Deposit background workers
+
+- The native SOL deposit scanner and deposit reconciliation use a dedicated
+  `DEPOSIT_WORKER_DATABASE_URL` pool. They never reuse the API/migration pool.
+- Migration 0016 creates `blackchin_deposit_worker_runtime`. Provision a
+  dedicated login as a non-superuser with `BYPASSRLS`, then grant membership:
+  ```sql
+  CREATE ROLE blackchin_deposit_worker_login LOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT BYPASSRLS;
+  GRANT blackchin_deposit_worker_runtime TO blackchin_deposit_worker_login;
+  ```
+  Set its password out-of-band and use only in `DEPOSIT_WORKER_DATABASE_URL`.
+- `BYPASSRLS` is necessary because the scanner intentionally processes
+  addresses across tenants. The login is not a superuser and has only the
+  explicit column/table grants in migration 0016.
+- The worker can read public wallet addresses and ownership/status metadata,
+  insert/update verified blockchain transaction lifecycle rows, update scanner
+  and reconciliation cursors, append reconciliation events, and emit deposit
+  webhook/operational events.
+- The worker cannot read encrypted HD mnemonic, IV or authentication-tag
+  columns; cannot read tenant credentials, idempotency reservations, dashboard
+  sessions, hot-wallet records or signing material; and cannot update/deliver
+  webhook outbox rows.
+- Startup validates the login attributes, role membership and required grants,
+  including explicit denial of encrypted mnemonic columns. Scanner/reconciliation
+  fail closed if this dedicated connection is absent or misconfigured.
+- Deposit verification resolves wallet metadata directly and does not invoke
+  the general signing-key resolver.
+
 ### Dashboard operators
 
 - Email + password with scrypt (N=16384, r=8, p=1, 64-byte derived key).
