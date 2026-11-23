@@ -116,7 +116,9 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         throw new TypeError('Withdrawal limits must be ordered: single <= daily <= weekly');
       }
 
-      const result = await db.query(
+      let result;
+      try {
+        result = await db.query(
         `INSERT INTO tenant_withdrawal_policies (
            tenant_id, enabled, emergency_frozen, freeze_reason,
            max_single_lamports, max_daily_lamports, max_weekly_lamports,
@@ -125,25 +127,22 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
          SELECT id, $2, TRUE, 'Policy changed; explicit unfreeze required',
                 $3::numeric, $4::numeric, $5::numeric, $6, $7, 1, $8
            FROM tenants WHERE id = $1
-         ON CONFLICT (tenant_id) DO UPDATE SET
-           enabled = EXCLUDED.enabled,
-           emergency_frozen = TRUE,
-           freeze_reason = 'Policy changed; explicit unfreeze required',
-           max_single_lamports = EXCLUDED.max_single_lamports,
-           max_daily_lamports = EXCLUDED.max_daily_lamports,
-           max_weekly_lamports = EXCLUDED.max_weekly_lamports,
-           max_daily_count = EXCLUDED.max_daily_count,
-           max_weekly_count = EXCLUDED.max_weekly_count,
-           policy_version = tenant_withdrawal_policies.policy_version + 1,
-           updated_by = EXCLUDED.updated_by,
-           updated_at = NOW()
          RETURNING tenant_id, enabled, emergency_frozen, freeze_reason,
                    max_single_lamports, max_daily_lamports, max_weekly_lamports,
                    max_daily_count, max_weekly_count, policy_version,
                    updated_by, created_at, updated_at`,
         [tenantId, input.enabled, input.maxSingleLamports, input.maxDailyLamports,
           input.maxWeeklyLamports, input.maxDailyCount, input.maxWeeklyCount, updatedBy]
-      );
+        );
+      } catch (cause) {
+        if (cause?.code === '23505') {
+          const error = new Error('This tenant already has a withdrawal policy');
+          error.statusCode = 409;
+          error.code = 'WITHDRAWAL_POLICY_EXISTS';
+          throw error;
+        }
+        throw cause;
+      }
       if (result.rowCount !== 1) {
         const error = new Error('Tenant was not found');
         error.statusCode = 404;
@@ -173,6 +172,115 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         createdAt: result.rows[0].created_at,
         updatedAt: result.rows[0].updated_at
       };
+    },
+
+    async updatePolicy(input = {}) {
+      const tenantId = assertId(input.tenantId, 'tenantId');
+      const updatedBy = String(input.updatedBy ?? '').trim();
+      if (!updatedBy || updatedBy.length > 128) throw new TypeError('updatedBy is required');
+      for (const field of ['maxSingleLamports', 'maxDailyLamports', 'maxWeeklyLamports']) {
+        if (typeof input[field] !== 'string' || !/^[1-9]\\d{0,29}$/.test(input[field])) {
+          throw new TypeError(`${field} must be a positive integer lamport string`);
+        }
+      }
+      for (const field of ['maxDailyCount', 'maxWeeklyCount']) {
+        if (!Number.isSafeInteger(input[field]) || input[field] < 1 || input[field] > 1_000_000) {
+          throw new TypeError(`${field} must be a positive safe integer`);
+        }
+      }
+      if (typeof input.enabled !== 'boolean') throw new TypeError('enabled must be boolean');
+      if (BigInt(input.maxSingleLamports) > BigInt(input.maxDailyLamports) ||
+          BigInt(input.maxDailyLamports) > BigInt(input.maxWeeklyLamports) ||
+          input.maxDailyCount > input.maxWeeklyCount) {
+        throw new TypeError('Withdrawal limits must be ordered: single <= daily <= weekly');
+      }
+
+      const result = await db.query(
+        `UPDATE tenant_withdrawal_policies
+            SET enabled = $2,
+                emergency_frozen = TRUE,
+                freeze_reason = 'Policy changed; explicit unfreeze required',
+                max_single_lamports = $3::numeric,
+                max_daily_lamports = $4::numeric,
+                max_weekly_lamports = $5::numeric,
+                max_daily_count = $6,
+                max_weekly_count = $7,
+                policy_version = policy_version + 1,
+                updated_by = $8,
+                updated_at = NOW()
+          WHERE tenant_id = $1
+          RETURNING tenant_id, enabled, emergency_frozen, freeze_reason,
+                    max_single_lamports, max_daily_lamports, max_weekly_lamports,
+                    max_daily_count, max_weekly_count, policy_version,
+                    updated_by, created_at, updated_at`,
+        [tenantId, input.enabled, input.maxSingleLamports, input.maxDailyLamports,
+          input.maxWeeklyLamports, input.maxDailyCount, input.maxWeeklyCount, updatedBy]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Tenant withdrawal policy was not found');
+        error.statusCode = 404;
+        error.code = 'WITHDRAWAL_POLICY_NOT_FOUND';
+        throw error;
+      }
+      await db.query(
+        `UPDATE tenant_withdrawal_approvals
+            SET status = 'revoked'
+          WHERE tenant_id = $1 AND status = 'approved'`,
+        [tenantId]
+      );
+      const row = result.rows[0];
+      return {
+        tenantId: String(row.tenant_id),
+        enabled: row.enabled,
+        emergencyFrozen: row.emergency_frozen,
+        freezeReason: row.freeze_reason,
+        maxSingleLamports: String(row.max_single_lamports),
+        maxDailyLamports: String(row.max_daily_lamports),
+        maxWeeklyLamports: String(row.max_weekly_lamports),
+        maxDailyCount: Number(row.max_daily_count),
+        maxWeeklyCount: Number(row.max_weekly_count),
+        policyVersion: String(row.policy_version),
+        updatedBy: row.updated_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      };
+    },
+
+    async deletePolicy({ tenantId } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      const client = await db.connect();
+      try {
+        await client.query('BEGIN');
+        const locked = await client.query(
+          `SELECT tenant_id FROM tenant_withdrawal_policies
+            WHERE tenant_id = $1
+            FOR UPDATE`,
+          [tenantId]
+        );
+        if (locked.rowCount !== 1) {
+          const error = new Error('Tenant withdrawal policy was not found');
+          error.statusCode = 404;
+          error.code = 'WITHDRAWAL_POLICY_NOT_FOUND';
+          throw error;
+        }
+        await client.query(
+          `UPDATE tenant_withdrawal_approvals
+              SET status = 'revoked'
+            WHERE tenant_id = $1 AND status = 'approved'`,
+          [tenantId]
+        );
+        await client.query(
+          'DELETE FROM tenant_withdrawal_policies WHERE tenant_id = $1',
+          [tenantId]
+        );
+        await client.query('COMMIT');
+        return { tenantId, deleted: true };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async freeze({ tenantId, reason, updatedBy } = {}) {
