@@ -55,17 +55,24 @@ signing should fail closed until a reviewed signer boundary is deployed.
 2. Resolve source wallet strictly inside the tenant.
 3. Validate network, destination, amount and active lifecycle.
 4. Enforce hot-wallet freeze/signing switch and single-transfer ceiling.
-5. Require a trusted `tenantWithdrawalPolicy.authorize` provider; otherwise
-   return `503 WITHDRAWAL_POLICY_UNAVAILABLE`.
-6. Bind idempotency to tenant, credential, approval reference, request hash,
-   wallet, destination, amount and network.
-7. Persist the signed signature before broadcast.
-8. On ambiguity, keep the intent `processing` and require reconciliation.
-9. Never blindly rebroadcast.
-10. Write immutable transaction evidence and append-only reconciliation events.
+5. Reserve tenant idempotency before consuming a one-time approval; completed
+   retries replay their original response without re-consuming approval.
+6. Lock the tenant policy row and enforce enabled/frozen state, active
+   allowlisted destination, exact approval binding and UTC daily/weekly
+   amount/count limits.
+7. Consume the credential-bound approval once and append an immutable policy
+   decision event. Denied requests fail their reservation and never sign.
+8. Persist the signed signature before broadcast.
+9. On ambiguity, keep the intent `processing` and require reconciliation.
+10. Never blindly rebroadcast; write immutable transaction evidence and
+    append-only reconciliation events.
 
-The API's `approvalReference` is not proof by itself. The policy provider must
-verify the partner approval, destination allowlist, limits and freeze state.
+The dashboard control plane issues approvals only for active tenant credentials
+with `withdrawals:submit`, active HD child wallets and active destinations.
+Approvals bind the exact lamport amount, wallet, destination, network, asset and
+canonical request hash; they expire within 15 minutes. Destination activation
+requires a second admin. Policy edits freeze withdrawals and revoke unused
+approvals; unfreeze is an explicit admin action.
 
 ## 5. Deposit verification
 
@@ -132,7 +139,7 @@ production privileges must separate migration ownership from application DML.
 Do not declare public production readiness until:
 
 - KMS/HSM or an isolated signer is deployed and recovery-tested.
-- The tenant withdrawal policy provider is implemented, reviewed and tested.
+- The tenant withdrawal policy provider and control-plane API pass CI and an independent security review.
 - Cloud secrets, TLS, private networking and least-privilege DB roles are live.
 - Concurrency, failure-injection, restore and reorg drills pass.
 - Alerting, incident response and on-call ownership are active.
