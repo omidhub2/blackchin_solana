@@ -459,6 +459,45 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
           expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 15 * 60_000) {
         throw new TypeError('Approval expiry must be within the next 15 minutes');
       }
+      const mapApproval = (row, replayed = false) => ({
+        tenantId: String(row.tenant_id), credentialId: String(row.credential_id),
+        approvalReference: row.approval_reference, requestHash: String(row.request_hash).trim(),
+        walletPublicKey: row.wallet_public_key, destinationPublicKey: row.destination_public_key,
+        network: row.network, asset: row.asset, amountLamports: String(row.amount_lamports),
+        status: row.status, issuer: row.issuer, issuerEventId: row.issuer_event_id,
+        expiresAt: row.expires_at, approvedAt: row.approved_at, replayed
+      });
+      const matchesBinding = (row) =>
+        String(row.tenant_id) === tenantId &&
+        String(row.credential_id) === credentialId &&
+        row.approval_reference === input.approvalReference &&
+        String(row.request_hash ?? '').trim() === requestHash &&
+        row.wallet_public_key === input.walletPublicKey &&
+        row.destination_public_key === input.destinationPublicKey &&
+        row.network === input.network &&
+        row.asset === 'SOL' &&
+        String(row.amount_lamports) === amountLamports;
+
+      // A stable issuer event ID makes partner approval issuance idempotent.
+      const prior = await db.query(
+        `SELECT tenant_id, credential_id, approval_reference, request_hash,
+                wallet_public_key, destination_public_key, network, asset,
+                amount_lamports, status, issuer, issuer_event_id, expires_at, approved_at
+           FROM tenant_withdrawal_approvals
+          WHERE tenant_id = $1 AND issuer = $2 AND issuer_event_id = $3
+          LIMIT 1`,
+        [tenantId, issuer, issuerEventId]
+      );
+      if (prior.rowCount === 1) {
+        if (!matchesBinding(prior.rows[0])) {
+          const error = new Error('Approval idempotency key was already used for a different request');
+          error.statusCode = 409;
+          error.code = 'WITHDRAWAL_APPROVAL_KEY_REUSED';
+          throw error;
+        }
+        return mapApproval(prior.rows[0], true);
+      }
+
       const configuredPolicy = await db.query(
         `SELECT enabled, emergency_frozen
            FROM tenant_withdrawal_policies
@@ -521,6 +560,7 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
             AND c.status = 'active' AND t.status = 'active'
             AND c.scopes @> ARRAY['withdrawals:submit']::text[]
             AND ($12::boolean = FALSE OR c.scopes @> ARRAY['withdrawals:approve']::text[])
+         ON CONFLICT (issuer, issuer_event_id) DO NOTHING
          RETURNING tenant_id, credential_id, approval_reference, request_hash,
                    wallet_public_key, destination_public_key, network, asset,
                    amount_lamports, status, issuer, issuer_event_id, expires_at, approved_at`,
@@ -528,21 +568,30 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
           input.walletPublicKey, input.destinationPublicKey, input.network,
           amountLamports, issuer, issuerEventId, expiresAt, input.requireApprovalScope === true]
       );
-      if (result.rowCount !== 1) {
-        const error = new Error('Active tenant credential with withdrawals:submit scope was not found');
-        error.statusCode = 404;
-        error.code = 'WITHDRAWAL_CREDENTIAL_NOT_FOUND';
+      if (result.rowCount === 1) return mapApproval(result.rows[0], false);
+
+      const replay = await db.query(
+        `SELECT tenant_id, credential_id, approval_reference, request_hash,
+                wallet_public_key, destination_public_key, network, asset,
+                amount_lamports, status, issuer, issuer_event_id, expires_at, approved_at
+           FROM tenant_withdrawal_approvals
+          WHERE tenant_id = $1 AND issuer = $2 AND issuer_event_id = $3
+          LIMIT 1`,
+        [tenantId, issuer, issuerEventId]
+      );
+      if (replay.rowCount === 1 && matchesBinding(replay.rows[0])) {
+        return mapApproval(replay.rows[0], true);
+      }
+      if (replay.rowCount === 1) {
+        const error = new Error('Approval idempotency key was already used for a different request');
+        error.statusCode = 409;
+        error.code = 'WITHDRAWAL_APPROVAL_KEY_REUSED';
         throw error;
       }
-      const row = result.rows[0];
-      return {
-        tenantId: String(row.tenant_id), credentialId: String(row.credential_id),
-        approvalReference: row.approval_reference, requestHash: String(row.request_hash).trim(),
-        walletPublicKey: row.wallet_public_key, destinationPublicKey: row.destination_public_key,
-        network: row.network, asset: row.asset, amountLamports: String(row.amount_lamports),
-        status: row.status, issuer: row.issuer, issuerEventId: row.issuer_event_id,
-        expiresAt: row.expires_at, approvedAt: row.approved_at
-      };
+      const error = new Error('Active tenant credential with required withdrawal scopes was not found, or approval reference already exists');
+      error.statusCode = 409;
+      error.code = 'WITHDRAWAL_APPROVAL_CONFLICT';
+      throw error;
     },
 
     async authorize(input = {}) {
