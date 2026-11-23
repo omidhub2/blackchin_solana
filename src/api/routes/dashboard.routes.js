@@ -22,9 +22,15 @@ import {
   rejectUnknownKeys,
   requireObject,
   requireString,
-  requireSafeInteger
+  requireSafeInteger,
+  requirePublicKey,
+  requireSolAmount
 } from '../validation.js';
 import { badRequest } from '../../core/errors.js';
+import {
+  hashTenantWithdrawalRequest,
+  solToLamports
+} from '../../core/withdrawals/tenant-withdrawal-policy.service.js';
 import {
   listOperationalEvents,
   recordOperationalEventSafe
@@ -213,6 +219,209 @@ export async function dashboardRoutes(app) {
   }));
 
   app.get('/network', { preHandler: authHook }, async (request) => services(request).dashboard.network());
+
+  // -------------------------------------------------------------------------
+  // Tenant withdrawal policy control plane (admin-only mutations)
+  // -------------------------------------------------------------------------
+
+  app.get('/tenants/:tenantId/withdrawal-policy', { preHandler: authHook }, async (request) =>
+    services(request).tenantWithdrawalPolicy.getPolicy(parseTenantId(request.params.tenantId))
+  );
+
+  app.put('/tenants/:tenantId/withdrawal-policy', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, [
+      'enabled', 'maxSingleLamports', 'maxDailyLamports', 'maxWeeklyLamports',
+      'maxDailyCount', 'maxWeeklyCount'
+    ]);
+    if (typeof body.enabled !== 'boolean') {
+      throw badRequest('enabled must be a boolean', 'INVALID_WITHDRAWAL_POLICY');
+    }
+    const result = await services(request).tenantWithdrawalPolicy.configurePolicy({
+      tenantId: parseTenantId(request.params.tenantId),
+      enabled: body.enabled,
+      maxSingleLamports: requireString(String(body.maxSingleLamports ?? ''), 'maxSingleLamports', {
+        min: 1, max: 30, pattern: /^[1-9]\\d{0,29}$/
+      }),
+      maxDailyLamports: requireString(String(body.maxDailyLamports ?? ''), 'maxDailyLamports', {
+        min: 1, max: 30, pattern: /^[1-9]\\d{0,29}$/
+      }),
+      maxWeeklyLamports: requireString(String(body.maxWeeklyLamports ?? ''), 'maxWeeklyLamports', {
+        min: 1, max: 30, pattern: /^[1-9]\\d{0,29}$/
+      }),
+      maxDailyCount: requireSafeInteger(Number(body.maxDailyCount), 'maxDailyCount', { min: 1, max: 1_000_000 }),
+      maxWeeklyCount: requireSafeInteger(Number(body.maxWeeklyCount), 'maxWeeklyCount', { min: 1, max: 1_000_000 }),
+      updatedBy: request.dashboard.user.email
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.policy_configured',
+      tenantId: result.tenantId,
+      payload: { enabled: result.enabled, policyVersion: result.policyVersion, updatedBy: result.updatedBy }
+    });
+    return result;
+  });
+
+  app.post('/tenants/:tenantId/withdrawal-policy/freeze', {
+    preHandler: [authHook, operatorGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['reason']);
+    const result = await services(request).tenantWithdrawalPolicy.freeze({
+      tenantId: parseTenantId(request.params.tenantId),
+      reason: requireString(body.reason, 'reason', { min: 1, max: 500 }),
+      updatedBy: request.dashboard.user.email
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.policy_frozen',
+      tenantId: result.tenantId,
+      payload: { reason: result.freezeReason, policyVersion: result.policyVersion }
+    });
+    return result;
+  });
+
+  app.post('/tenants/:tenantId/withdrawal-policy/unfreeze', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, []);
+    const result = await services(request).tenantWithdrawalPolicy.unfreeze({
+      tenantId: parseTenantId(request.params.tenantId),
+      updatedBy: request.dashboard.user.email
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.policy_unfrozen',
+      tenantId: result.tenantId,
+      payload: { policyVersion: result.policyVersion, updatedBy: request.dashboard.user.email }
+    });
+    return result;
+  });
+
+  app.get('/tenants/:tenantId/withdrawal-destinations', { preHandler: authHook }, async (request) => ({
+    items: await services(request).tenantWithdrawalPolicy.listDestinations(
+      parseTenantId(request.params.tenantId)
+    )
+  }));
+
+  app.post('/tenants/:tenantId/withdrawal-destinations', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['network', 'destinationPublicKey', 'label']);
+    const network = requireString(body.network, 'network', { min: 5, max: 16 });
+    if (!['devnet', 'testnet', 'mainnet-beta'].includes(network)) {
+      throw badRequest('Unsupported Solana network', 'INVALID_NETWORK');
+    }
+    const destination = await services(request).tenantWithdrawalPolicy.addDestination({
+      tenantId: parseTenantId(request.params.tenantId),
+      network,
+      destinationPublicKey: requirePublicKey(body.destinationPublicKey, 'destinationPublicKey'),
+      label: body.label === undefined ? null : requireString(body.label, 'label', { max: 100 }),
+      createdBy: request.dashboard.user.email
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.destination_created',
+      tenantId: destination.tenantId,
+      network: destination.network,
+      payload: { destinationId: destination.id, status: destination.status }
+    });
+    return reply.code(201).send({ destination });
+  });
+
+  app.post('/tenants/:tenantId/withdrawal-destinations/:destinationId/activate', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, []);
+    const destination = await services(request).tenantWithdrawalPolicy.activateDestination({
+      tenantId: parseTenantId(request.params.tenantId),
+      destinationId: parseTenantId(request.params.destinationId),
+      approvedBy: request.dashboard.user.email
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.destination_activated',
+      tenantId: destination.tenantId,
+      network: destination.network,
+      payload: { destinationId: destination.id, approvedBy: destination.approvedBy }
+    });
+    return { destination };
+  });
+
+  app.post('/tenants/:tenantId/withdrawal-destinations/:destinationId/revoke', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, []);
+    const destination = await services(request).tenantWithdrawalPolicy.revokeDestination({
+      tenantId: parseTenantId(request.params.tenantId),
+      destinationId: parseTenantId(request.params.destinationId)
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.destination_revoked',
+      tenantId: destination.tenantId,
+      network: destination.network,
+      payload: { destinationId: destination.id }
+    });
+    return { destination };
+  });
+
+  app.post('/tenants/:tenantId/withdrawal-approvals', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, [
+      'credentialId', 'approvalReference', 'walletPublicKey',
+      'destinationPublicKey', 'network', 'amountSol', 'expiresInSeconds'
+    ]);
+    const network = requireString(body.network, 'network', { min: 5, max: 16 });
+    if (!['devnet', 'testnet', 'mainnet-beta'].includes(network)) {
+      throw badRequest('Unsupported Solana network', 'INVALID_NETWORK');
+    }
+    const amountSol = requireSolAmount(body.amountSol);
+    const amountLamports = solToLamports(amountSol);
+    const approvalReference = requireString(body.approvalReference, 'approvalReference', {
+      min: 8, max: 128, pattern: /^[A-Za-z0-9._:-]+$/
+    });
+    const walletPublicKey = requirePublicKey(body.walletPublicKey, 'walletPublicKey');
+    const destinationPublicKey = requirePublicKey(body.destinationPublicKey, 'destinationPublicKey');
+    const expiresInSeconds = requireSafeInteger(Number(body.expiresInSeconds ?? 300), 'expiresInSeconds', {
+      min: 60, max: 900
+    });
+    const approval = await services(request).tenantWithdrawalPolicy.issueApproval({
+      tenantId: parseTenantId(request.params.tenantId),
+      credentialId: parseTenantId(body.credentialId),
+      approvalReference,
+      requestHash: hashTenantWithdrawalRequest({
+        fromPublicKey: walletPublicKey,
+        toPublicKey: destinationPublicKey,
+        amountLamports,
+        network,
+        approvalReference
+      }),
+      walletPublicKey,
+      destinationPublicKey,
+      amountLamports,
+      network,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
+      issuer: `dashboard:${request.dashboard.user.email}`
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant_withdrawal.approval_issued',
+      tenantId: approval.tenantId,
+      network: approval.network,
+      walletPublicKey: approval.walletPublicKey,
+      payload: {
+        credentialId: approval.credentialId,
+        approvalReference: approval.approvalReference,
+        destinationPublicKey: approval.destinationPublicKey,
+        amountLamports: approval.amountLamports,
+        expiresAt: approval.expiresAt
+      }
+    });
+    reply.header('Cache-Control', 'no-store');
+    return reply.code(201).send({ approval });
+  });
 
   // -------------------------------------------------------------------------
   // Operational mutations
