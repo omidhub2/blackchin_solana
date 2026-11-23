@@ -36,6 +36,8 @@ export default function SecurityPage() {
   const queryClient = useQueryClient();
 
   const [tenantId, setTenantId] = useState('');
+  const [newTenantCode, setNewTenantCode] = useState('');
+  const [newTenantName, setNewTenantName] = useState('');
   const [enabled, setEnabled] = useState(false);
   const [maxSingleLamports, setMaxSingleLamports] = useState('');
   const [maxDailyLamports, setMaxDailyLamports] = useState('');
@@ -60,6 +62,28 @@ export default function SecurityPage() {
   const tenants = useQuery({
     queryKey: ['tenants'],
     queryFn: () => api.get<ListResponse<TenantRecord>>('/tenants', { limit: 200 })
+  });
+
+  const createTenantMutation = useMutation({
+    mutationFn: () => api.post<{ tenant: TenantRecord }>('/tenants', {
+      tenantCode: newTenantCode.trim(),
+      displayName: newTenantName.trim()
+    }),
+    onSuccess: async ({ tenant }) => {
+      setNewTenantCode('');
+      setNewTenantName('');
+      setTenantId(tenant.id);
+      await queryClient.invalidateQueries({ queryKey: ['tenants'] });
+      await queryClient.invalidateQueries({ queryKey: ['security'] });
+    }
+  });
+  const tenantStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'active' | 'suspended' | 'disabled' }) =>
+      api.put<{ tenant: TenantRecord }>(`/tenants/${id}/status`, { status }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['tenants'] });
+      await queryClient.invalidateQueries({ queryKey: ['security'] });
+    }
   });
 
   useEffect(() => {
@@ -214,12 +238,90 @@ export default function SecurityPage() {
     { key: 'updated', header: t('common.updated'), render: (row) => <span className="text-[11px] text-slate-500">{formatDateTime(row.updatedAt)}</span> }
   ];
 
-  const mutationError = configure.error ?? freeze.error ?? unfreeze.error ??
+  const mutationError = createTenantMutation.error ?? tenantStatusMutation.error ?? configure.error ?? freeze.error ?? unfreeze.error ??
     addDestination.error ?? activateDestination.error ?? revokeDestination.error ?? issueApproval.error ?? revokeApproval.error;
 
   return (
     <div className="space-y-6">
       <PageHeader title={t('security.title')} subtitle={t('security.subtitle')} />
+
+      <Panel className="space-y-4 p-5">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">Tenant registry</h2>
+          <p className="mt-1 text-xs text-slate-500">Create and manage partner tenants. New tenants start pending and receive no wallets, credentials or withdrawal permissions automatically.</p>
+        </div>
+        <form className="grid gap-3 md:grid-cols-[1fr_1fr_auto]" onSubmit={(event) => {
+          event.preventDefault();
+          createTenantMutation.mutate();
+        }}>
+          <Field label="Tenant code">
+            <input
+              className={inputClass}
+              value={newTenantCode}
+              onChange={(event) => setNewTenantCode(event.target.value)}
+              minLength={2}
+              maxLength={64}
+              pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}"
+              placeholder="acme-prod"
+              required
+            />
+          </Field>
+          <Field label="Display name">
+            <input
+              className={inputClass}
+              value={newTenantName}
+              onChange={(event) => setNewTenantName(event.target.value)}
+              maxLength={160}
+              placeholder="Acme Production"
+              required
+            />
+          </Field>
+          <div className="flex items-end">
+            <button
+              type="submit"
+              className="btn-primary w-full"
+              disabled={createTenantMutation.isPending || !newTenantCode.trim() || !newTenantName.trim()}
+            >
+              {createTenantMutation.isPending ? t('common.loading') : 'Create tenant'}
+            </button>
+          </div>
+        </form>
+        <div className="space-y-2">
+          {(tenants.data?.items ?? []).map((tenant) => (
+            <div key={tenant.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
+              <button type="button" className="min-w-0 text-left" onClick={() => setTenantId(tenant.id)}>
+                <span className="block truncate text-sm text-slate-200">{tenant.displayName} <span className="text-xs text-slate-500">· {tenant.tenantCode} · #{tenant.id}</span></span>
+                <span className="mt-1 block text-[11px] text-slate-500">{tenant.hdWallets} HD wallets · {tenant.childWallets} child wallets</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <StatusBadge status={tenant.status} />
+                {tenant.status !== 'active' ? (
+                  <button
+                    type="button"
+                    className="btn-secondary !px-3 !py-1.5 text-xs"
+                    disabled={tenantStatusMutation.isPending}
+                    onClick={() => tenantStatusMutation.mutate({ id: tenant.id, status: 'active' })}
+                  >
+                    Activate
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-secondary !px-3 !py-1.5 text-xs"
+                    disabled={tenantStatusMutation.isPending}
+                    onClick={() => tenantStatusMutation.mutate({ id: tenant.id, status: 'suspended' })}
+                  >
+                    Suspend
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {tenants.isLoading ? <p className="text-xs text-slate-500">{t('common.loading')}</p> : null}
+          {tenants.isSuccess && (tenants.data?.items ?? []).length === 0 ? <p className="text-xs text-slate-500">No tenants created yet.</p> : null}
+          {tenants.error ? <p className="text-xs text-rose-300">{tenants.error.message}</p> : null}
+        </div>
+      </Panel>
 
       <Panel className="p-5">
         <h2 className="mb-3 text-sm font-semibold text-slate-200">{t('security.policies')}</h2>
