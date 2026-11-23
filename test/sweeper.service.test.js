@@ -46,6 +46,9 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
       jobs.set(row.id, row);
       return { rows: [row], rowCount: 1 };
     }
+    if (text.includes("WHERE network = $1 AND status = 'submitted'")) {
+      return { rows: [...jobs.values()].filter((row) => row.status === 'submitted'), rowCount: [...jobs.values()].filter((row) => row.status === 'submitted').length };
+    }
     if (text.includes('SELECT * FROM sweep_jobs WHERE idempotency_key')) {
       return { rows: [], rowCount: 0 };
     }
@@ -103,6 +106,27 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
       return { availableLamports: balance, estimatedFeeLamports: '5000' };
     },
     async getSlot() { return 123; },
+    async getSignatureStatuses() {
+      return { value: [{ confirmationStatus: 'finalized', err: null, slot: 123 }] };
+    },
+    async getParsedTransaction() {
+      return {
+        slot: 123,
+        transaction: {
+          signatures: [SIGNATURE],
+          message: {
+            instructions: [{
+              program: 'system',
+              parsed: {
+                type: 'transfer',
+                info: { source: SOURCE, destination: DESTINATION, lamports: 85000 }
+              }
+            }]
+          }
+        },
+        meta: { err: null, fee: 5000, innerInstructions: [] }
+      };
+    },
     formatLamports(value) {
       const n = BigInt(value);
       return `${n / 1_000_000_000n}.${(n % 1_000_000_000n).toString().padStart(9, '0')}`;
@@ -199,4 +223,53 @@ test('does not mark a sweep completed if immutable ledger persistence fails afte
   );
   assert.equal(h.jobs.get('41').status, 'submitted');
   assert.equal(h.jobs.get('41').transaction_signature, SIGNATURE);
+});
+
+
+test('reconciles a submitted sweep only after finalized sender, destination and amount evidence', async () => {
+  const h = harness();
+  const plan = await h.service.planSolSweep({ tenantId: null, sourcePublicKey: SOURCE });
+  const job = h.jobs.get(plan.job.id);
+  job.status = 'submitted';
+  job.transaction_signature = SIGNATURE;
+
+  const result = await h.service.reconcileSubmittedSweeps();
+
+  assert.equal(result.checked, 1);
+  assert.equal(result.completed, 1);
+  assert.equal(h.jobs.get(plan.job.id).status, 'completed');
+  assert.equal(h.ledger.length, 1);
+  assert.equal(h.ledger[0].signature, SIGNATURE);
+  assert.equal(h.ledger[0].direction, 'sweep');
+  assert.equal(h.events.at(-1).params[3], 'reconciled_finalized');
+});
+
+test('moves a submitted sweep to under_review when finalized transfer details do not match', async () => {
+  const h = harness();
+  const plan = await h.service.planSolSweep({ tenantId: null, sourcePublicKey: SOURCE });
+  const job = h.jobs.get(plan.job.id);
+  job.status = 'submitted';
+  job.transaction_signature = SIGNATURE;
+  h.rpc.getParsedTransaction = async () => ({
+    slot: 123,
+    transaction: {
+      signatures: [SIGNATURE],
+      message: {
+        instructions: [{
+          program: 'system',
+          parsed: {
+            type: 'transfer',
+            info: { source: SOURCE, destination: DESTINATION, lamports: 123 }
+          }
+        }]
+      }
+    },
+    meta: { err: null, fee: 5000, innerInstructions: [] }
+  });
+
+  const result = await h.service.reconcileSubmittedSweeps();
+
+  assert.equal(result.underReview, 1);
+  assert.equal(h.jobs.get(plan.job.id).status, 'under_review');
+  assert.equal(h.ledger.length, 0);
 });
