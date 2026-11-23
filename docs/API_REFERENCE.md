@@ -192,6 +192,16 @@ Scope: `withdrawals:read`. Returns one tenant-owned withdrawal intent and its cu
 
 Scope: `withdrawals:estimate`. Body: `{ "fromPublicKey", "toPublicKey", "amountSol" }`. Only active HD child wallets owned by the authenticated tenant are eligible. Returns a read-only fee/balance estimate; never signs or broadcasts.
 
+### `POST /api/v1/tenant/withdrawal-approvals`
+
+Scopes: `withdrawals:approve` and `withdrawals:submit` on the same
+credential. Requires an `Idempotency-Key` header and body
+`{ "fromPublicKey", "toPublicKey", "amountSol", "approvalReference", "expiresInSeconds?" }`.
+The server derives tenant, credential and network from authenticated context.
+The approval is one-time, bound to the exact request and expires within
+60–900 seconds. Repeating the same issuer idempotency key and exact request
+replays the same approval; reusing it for a different request is rejected.
+
 ### `POST /api/v1/tenant/withdrawals`
 
 Scope: `withdrawals:submit`. Requires an `Idempotency-Key` header and body `{ "fromPublicKey", "toPublicKey", "amountSol", "approvalReference" }`. The approval reference must be verified by the configured tenant withdrawal policy. Submit is rate-limited to 10/min and estimate to 30/min per client IP. The service reserves the tenant-scoped idempotency key before policy authorization so a completed retry can replay without re-consuming its one-time approval. A denied authorization marks the reservation failed and never signs. Missing policy rows, disabled/frozen policies, invalid approvals, non-allowlisted destinations and exceeded limits all fail closed.
@@ -264,6 +274,7 @@ is taken from the credential, never the body.
 | `GET` | `/api/v1/tenant/withdrawals` | `withdrawals:read` |
 | `GET` | `/api/v1/tenant/withdrawals/:idempotencyKey` | `withdrawals:read` |
 | `POST` | `/api/v1/tenant/withdrawals/estimate` | `withdrawals:estimate` |
+| `POST` | `/api/v1/tenant/withdrawal-approvals` | `withdrawals:approve` + `withdrawals:submit` |
 | `POST` | `/api/v1/tenant/withdrawals` | `withdrawals:submit` |
 | `GET` | `/api/v1/tenant/deposits` | `deposits:read` |
 | `GET` | `/api/v1/tenant/deposits/:signature` | `deposits:read` |
