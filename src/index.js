@@ -6,6 +6,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
+const { assertSolanaNetworkIdentity } = await import('../config/connection.js');
+await assertSolanaNetworkIdentity();
+
 const { connectToPostgres, disconnectPostgres, pool } =
   await import('../PostgreSQL/walletStorage.js');
 
