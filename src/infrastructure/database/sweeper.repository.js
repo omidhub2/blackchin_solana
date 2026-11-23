@@ -104,3 +104,42 @@ export async function listSweepJobs(db, { tenantId = undefined, limit = 50, offs
     );
   return result.rows;
 }
+
+export async function listSweepCandidates(db, network, { limit = 500 } = {}) {
+  const result = await db.query(
+    `SELECT a.id AS account_id, a.tenant_id, a.hd_wallet_id, a.public_key,
+            a.network, p.id AS policy_id, p.execution_enabled
+       FROM wallet_accounts a
+       INNER JOIN hd_wallets h
+         ON h.id = a.hd_wallet_id
+        AND h.tenant_id IS NOT DISTINCT FROM a.tenant_id
+        AND h.status = 'active'
+       INNER JOIN sweep_policies p
+         ON p.tenant_id IS NOT DISTINCT FROM a.tenant_id
+        AND p.network = a.network
+        AND p.enabled = TRUE
+      WHERE a.network = $1
+        AND a.status = 'active'
+      ORDER BY a.id ASC
+      LIMIT $2`,
+    [network, limit]
+  );
+  return result.rows;
+}
+
+export async function acquireSweeperLock(client, network) {
+  const result = await client.query(
+    'SELECT pg_try_advisory_lock(hashtext($1)::bigint) AS acquired',
+    [`blackchin:sweeper:${network}`]
+  );
+  if (result.rows[0]?.acquired !== true) return null;
+  return {
+    async release() {
+      await client.query(
+        'SELECT pg_advisory_unlock(hashtext($1)::bigint)',
+        [`blackchin:sweeper:${network}`]
+      ).catch(() => {});
+    }
+  };
+}
+
