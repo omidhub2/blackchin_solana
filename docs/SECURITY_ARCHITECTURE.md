@@ -24,6 +24,19 @@
 - The tenant login must be a non-superuser, non-BYPASSRLS member of
   `blackchin_tenant_runtime`; the migration/control-plane pool must not be
   reused for tenant API queries.
+- Provision a dedicated login through the database administrator/secret
+  manager, then grant only the restricted runtime role:
+  ```sql
+  CREATE ROLE blackchin_tenant_login LOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  GRANT blackchin_tenant_runtime TO blackchin_tenant_login;
+  ```
+  Set its password out-of-band and use that login only in
+  `TENANT_DATABASE_URL`. Do not grant it table ownership or other privileged
+  role memberships.
+- Every tenant table has both a permissive access policy and a restrictive
+  tenant guard. The restrictive policy is ANDed with any future permissive
+  policy, preventing an accidentally broad policy from overriding isolation.
 
 ### Dashboard operators
 
