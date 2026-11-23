@@ -10,6 +10,7 @@ on:
       - "security/phase3-ledger-atomicity"
       - "security/phase4-worker-reconciliation"
       - "reliability/phase5-end-to-end"
+      - "feature/phase6-sweeper-engine"
   pull_request:
     branches:
       - main
@@ -44,6 +45,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/blackchin_ci
       TENANT_DATABASE_URL: postgresql://blackchin_ci_tenant:ci-tenant-password@127.0.0.1:5432/blackchin_ci
       DEPOSIT_WORKER_DATABASE_URL: postgresql://blackchin_ci_deposit_worker:ci-worker-password@127.0.0.1:5432/blackchin_ci
+      SWEEPER_DATABASE_URL: postgresql://blackchin_ci_sweeper:ci-sweeper-password@127.0.0.1:5432/blackchin_ci
       TENANT_CONTEXT_HMAC_KEY: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       API_ACCESS_KEY: ci-only-api-key-aaaaaaaaaaaaaaaaaaaaaaaa
@@ -123,6 +125,43 @@ jobs:
             (error) => error.code === '42501'
           );
           await worker.end();
+          NODE
+
+      - name: Provision restricted sweeper runtime login
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import pg from 'pg';
+          import { assertSweeperRuntimeRole } from './src/infrastructure/security/sweeper-worker-role.js';
+          const admin = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+          await admin.query(`
+            DO $block$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'blackchin_ci_sweeper') THEN
+                CREATE ROLE blackchin_ci_sweeper LOGIN
+                  PASSWORD 'ci-sweeper-password' NOSUPERUSER NOCREATEDB NOCREATEROLE
+                  INHERIT BYPASSRLS;
+              END IF;
+            END
+            $block$;
+          `);
+          await admin.query('GRANT blackchin_sweeper_runtime TO blackchin_ci_sweeper');
+          await admin.end();
+
+          const sweeper = new pg.Pool({ connectionString: process.env.SWEEPER_DATABASE_URL });
+          const identity = await assertSweeperRuntimeRole(sweeper);
+          assert.equal(identity.encryptedHdMnemonicAccess, true);
+          assert.equal(identity.legacyPrivateKeyAccess, false);
+          await sweeper.query('SELECT mnemonic_encrypted FROM hd_wallets LIMIT 0');
+          await assert.rejects(
+            () => sweeper.query('SELECT private_key_encrypted FROM wallets LIMIT 0'),
+            (error) => error.code === '42501'
+          );
+          await assert.rejects(
+            () => sweeper.query('SELECT * FROM tenant_api_credentials LIMIT 0'),
+            (error) => error.code === '42501'
+          );
+          await sweeper.end();
           NODE
 
       - name: Run the complete backend test suite
