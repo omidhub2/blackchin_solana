@@ -23,7 +23,7 @@ export function Field({
     <label className={clsx('block', className)}>
       <span className="field-label">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11px] text-slate-500">{hint}</span> : null}
+      {hint ? <span className="mt-1 block text-xs text-slate-500">{hint}</span> : null}
     </label>
   );
 }
@@ -62,7 +62,7 @@ export function Modal({
       />
       <div className="panel relative z-10 w-full max-w-lg overflow-hidden">
         <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
+          <h2 className="text-base font-semibold text-slate-100">{title}</h2>
           <button type="button" onClick={onClose} className="btn-ghost !p-1.5" aria-label="Close">
             <X size={16} />
           </button>
@@ -100,8 +100,8 @@ export function EmptyState({ title, description }: { title: string; description?
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center">
       <div className="h-10 w-10 rounded-full border border-white/10 bg-white/[0.03]" />
-      <p className="text-sm font-medium text-slate-300">{title}</p>
-      {description ? <p className="max-w-sm text-xs text-slate-500">{description}</p> : null}
+      <p className="text-base font-medium text-slate-300">{title}</p>
+      {description ? <p className="max-w-sm text-sm text-slate-500">{description}</p> : null}
     </div>
   );
 }
@@ -109,7 +109,7 @@ export function EmptyState({ title, description }: { title: string; description?
 export function SectionTitle({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <h2 className="text-sm font-semibold tracking-tight text-slate-200">{children}</h2>
+      <h2 className="text-base font-semibold tracking-tight text-slate-200">{children}</h2>
       {action}
     </div>
   );
