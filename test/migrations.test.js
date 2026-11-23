@@ -369,6 +369,8 @@ test('0015 installs immutable ledger/idempotency guards and per-wallet withdrawa
     'utf8'
   );
 
+  assert.match(sql, /LOCK TABLE public\.api_idempotency_keys IN SHARE ROW EXCLUSIVE MODE/i);
+  assert.match(sql, /wallet_public_key IS NULL/i);
   assert.match(sql, /uq_withdrawal_one_processing_per_tenant_wallet/i);
   assert.match(sql, /uq_withdrawal_one_processing_per_legacy_wallet/i);
   assert.match(sql, /status = 'processing'/i);
