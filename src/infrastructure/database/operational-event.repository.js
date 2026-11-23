@@ -80,7 +80,8 @@ export async function recordOperationalEvent(db, {
   walletPublicKey = null,
   hdWalletId = null,
   payload = {},
-  eventId = crypto.randomUUID()
+  eventId = crypto.randomUUID(),
+  returnMinimal = false
 } = {}) {
   assertOperationalEventType(eventType);
 
@@ -93,7 +94,7 @@ export async function recordOperationalEvent(db, {
        (event_id, tenant_id, event_type, network, wallet_public_key, hd_wallet_id, payload)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
      ON CONFLICT (event_id) DO NOTHING
-     RETURNING ${EVENT_COLUMNS}`,
+     RETURNING ${returnMinimal ? 'id, event_id' : EVENT_COLUMNS}`,
     [
       eventId,
       tenantId === null ? null : String(tenantId),
@@ -105,7 +106,13 @@ export async function recordOperationalEvent(db, {
     ]
   );
 
-  return { created: result.rowCount === 1, event: mapEvent(result.rows[0]) };
+  const row = result.rows[0];
+  return {
+    created: result.rowCount === 1,
+    event: returnMinimal
+      ? (row ? { id: String(row.id), eventId: row.event_id } : null)
+      : mapEvent(row)
+  };
 }
 
 /**
