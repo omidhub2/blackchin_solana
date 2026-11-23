@@ -45,7 +45,9 @@ function hashRequest({ fromPublicKey, toPublicKey, amountSol }) {
 
 export function createWithdrawalService({ db, rpc, network, commitment, cipher }) {
   async function reserve({ idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports }) {
-    const reservation = await db.query(
+    let reservation;
+    try {
+      reservation = await db.query(
       `
         INSERT INTO api_idempotency_keys
           (idempotency_key, request_hash, status, wallet_public_key, operation, network, to_public_key, amount_lamports)
@@ -54,7 +56,17 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         RETURNING idempotency_key
       `,
       [idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
-    );
+      );
+    } catch (error) {
+      if (error?.code === '23505' &&
+          error?.constraint === 'uq_withdrawal_one_processing_per_legacy_wallet') {
+        throw conflict(
+          'Another withdrawal from this wallet is still processing or awaiting reconciliation',
+          'WALLET_WITHDRAWAL_IN_PROGRESS'
+        );
+      }
+      throw error;
+    }
 
     if (reservation.rowCount !== 0) {
       return { reserved: true };
