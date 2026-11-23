@@ -181,10 +181,11 @@ async function getStoredWalletPublicKey(publicKey) {
 const MAX_BLOCKHASH_WAIT_MS = 90_000;
 const BLOCKHASH_WINDOW_CHECK_MS = 2_000;
 
-async function confirmWithBlockhashWindow({
+export async function confirmWithBlockhashWindow({
   signature,
   latestBlockhash,
-  commitmentLevel
+  commitmentLevel,
+  rpcConnection = connection
 }) {
   let blockHeightTimer;
   let confirmationTimeout;
@@ -197,7 +198,7 @@ async function confirmWithBlockhashWindow({
       blockHeightCheckInFlight = true;
 
       try {
-        const { value: blockHeight } = await connection.getBlockHeight(commitmentLevel);
+        const { value: blockHeight } = await rpcConnection.getBlockHeight(commitmentLevel);
 
         if (
           Number.isSafeInteger(blockHeight) &&
@@ -226,10 +227,10 @@ async function confirmWithBlockhashWindow({
       error.signature = signature;
       reject(error);
     }, MAX_BLOCKHASH_WAIT_MS);
-    timer.unref?.();
+    confirmationTimeout.unref?.();
   });
 
-  const confirmation = connection.confirmTransaction(
+  const confirmation = rpcConnection.confirmTransaction(
     {
       signature,
       blockhash: latestBlockhash.blockhash,
