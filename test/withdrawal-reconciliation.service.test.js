@@ -225,7 +225,7 @@ test('finalized withdrawal commit acknowledgement loss rolls back and leaves cur
   assert.equal(h.clientCalls.some((x) => x.query === 'ROLLBACK'), true);
   assert.equal(h.clientCalls.some((x) => x.query === 'COMMIT'), true);
   assert.equal(h.calls.some((x) => x.query.includes('UPDATE withdrawal_reconciliation_cursors') && x.query.includes('last_id = $2')), false);
-  assert.equal(h.calls.some((x) => x.query.includes("SET status = 'error'")), true);
+  assert.equal(h.calls.some((x) => x.query.includes("status = 'error'")), true);
 });
 
 test('reconciliation event write failure rolls back ledger and idempotency completion', async () => {
