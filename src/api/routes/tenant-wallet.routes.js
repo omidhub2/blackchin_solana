@@ -34,8 +34,19 @@ export async function tenantWalletRoutes(app) {
         message: 'Tenant authentication is not configured'
       });
 
-  app.addHook('preHandler', tenantAuth);
   const distributed = db ? { db } : null;
+  // Throttle unauthenticated tenant traffic before it reaches the control-plane
+  // credential lookup/update. Route-specific limits below apply after identity
+  // and scopes have been established.
+  const tenantAuthLimiter = rateLimitHook({
+    limit: 600,
+    windowMs: 60_000,
+    keyPrefix: 'tenant-auth-preflight',
+    distributed,
+    failClosed: true
+  });
+  app.addHook('preHandler', tenantAuthLimiter);
+  app.addHook('preHandler', tenantAuth);
   const createLimiter = rateLimitHook({ limit: 10, windowMs: 60_000, keyPrefix: 'tenant-hd-create', distributed });
   const accountLimiter = rateLimitHook({ limit: 20, windowMs: 60_000, keyPrefix: 'tenant-address-create', distributed });
   const recoveryLimiter = rateLimitHook({ limit: 5, windowMs: 60_000, keyPrefix: 'tenant-recovery', distributed });
