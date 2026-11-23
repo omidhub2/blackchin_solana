@@ -265,26 +265,6 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         throw error;
       }
 
-      const existing = await findTransactionBySignature(db, sent.signature, fromPublicKey, 'withdrawal');
-
-      if (!existing) {
-        await insertBlockchainTransaction(db, {
-          signature: sent.signature,
-          direction: 'withdrawal',
-          walletPublicKey: fromPublicKey,
-          hdWalletId: wallet.hdWalletId,
-          counterparty: toPublicKey,
-          amountLamports: sent.amountLamports,
-          feeLamports: sent.feeLamports,
-          network,
-          commitment: sent.confirmationStatus ?? commitment,
-          status: 'confirmed',
-          slot: sent.slot ?? null,
-          idempotencyKey,
-          metadata: { walletType: wallet.walletType, accountIndex: wallet.accountIndex }
-        });
-      }
-
       const response = {
         sent: true,
         signature: sent.signature,
@@ -301,28 +281,72 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
         hdWalletId: wallet.hdWalletId
       };
 
+      // The ledger insert and idempotency completion are one commit. If either
+      // fails after broadcast, the reservation remains processing and the
+      // reconciliation worker is the only path allowed to resolve it.
+      const client = await db.connect();
       try {
-        await db.query(
-          `
-            UPDATE api_idempotency_keys
-            SET status = 'completed',
-                response_json = $2::jsonb,
-                transaction_signature = $3,
-                updated_at = NOW()
+        await client.query('BEGIN');
+        let existing = await findTransactionBySignature(
+          client, sent.signature, fromPublicKey, 'withdrawal'
+        );
+        const matchesSentTransaction = (record) => record &&
+          record.amountLamports === sent.amountLamports &&
+          record.counterparty === toPublicKey &&
+          record.network === network &&
+          record.idempotencyKey === idempotencyKey &&
+          record.hdWalletId === (wallet.hdWalletId ?? null) &&
+          ['confirmed', 'credited'].includes(record.status);
+
+        if (existing && !matchesSentTransaction(existing)) {
+          throw new Error('Existing legacy withdrawal ledger row conflicts with the signed request');
+        }
+
+        if (!existing) {
+          const inserted = await insertBlockchainTransaction(client, {
+            signature: sent.signature,
+            direction: 'withdrawal',
+            walletPublicKey: fromPublicKey,
+            hdWalletId: wallet.hdWalletId,
+            counterparty: toPublicKey,
+            amountLamports: sent.amountLamports,
+            feeLamports: sent.feeLamports,
+            network,
+            commitment: sent.confirmationStatus ?? commitment,
+            status: 'confirmed',
+            slot: sent.slot ?? null,
+            idempotencyKey,
+            metadata: { walletType: wallet.walletType, accountIndex: wallet.accountIndex }
+          });
+          if (!inserted.created) {
+            existing = await findTransactionBySignature(
+              client, sent.signature, fromPublicKey, 'withdrawal'
+            );
+            if (!matchesSentTransaction(existing)) {
+              throw new Error('Withdrawal signature conflicts with an existing ledger record');
+            }
+          }
+        }
+
+        const completed = await client.query(
+          `UPDATE api_idempotency_keys
+              SET status = 'completed', response_json = $2::jsonb,
+                  updated_at = NOW()
             WHERE idempotency_key = $1 AND tenant_id IS NULL
-              AND network = $4
-          `,
+              AND status = 'processing' AND transaction_signature = $3
+              AND network = $4`,
           [idempotencyKey, JSON.stringify(response), sent.signature, network]
         );
+        if (completed.rowCount !== 1) {
+          throw new Error('Legacy withdrawal idempotency state changed before atomic completion');
+        }
+        await client.query('COMMIT');
       } catch (error) {
-        // The transaction is already on-chain: leaving the key in
-        // `processing` forces manual reconciliation instead of a retry that
-        // could double-spend. The real result is still returned.
-        console.error('[WITHDRAWAL COMPLETION FAILURE]', {
-          idempotencyKey,
-          signature: sent.signature,
-          message: error.message
-        });
+        await client.query('ROLLBACK').catch(() => {});
+        error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+        throw error;
+      } finally {
+        client.release();
       }
 
       return response;
