@@ -1,44 +1,97 @@
-name: Deposit verification and scanner regression tests
+name: CI
 
 on:
   push:
     branches:
       - "fix/withdrawal-deposit-safety"
       - "feat/tenant-withdrawal-policy-management"
+      - "hardening/phase1-ci-test-foundation"
   pull_request:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  deposit-scanner:
+  backend:
+    name: Backend tests (Node 20 + PostgreSQL 16)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: blackchin_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d blackchin_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/blackchin_ci
+      ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      API_ACCESS_KEY: ci-only-api-key-aaaaaaaaaaaaaaaaaaaaaaaa
+      SOLANA_NETWORK: devnet
+      SOLANA_RPC_URL: https://api.devnet.solana.com
+      SOLANA_COMMITMENT: confirmed
+      DASHBOARD_COOKIE_SECURE: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install dependencies
+          cache: npm
+
+      - name: Install backend dependencies
         run: npm ci
-      - name: Run deposit scanner tests
-        run: node --test test/tenant-withdrawal-policy.service.test.js test/tenant-withdrawal-policy.dashboard.test.js test/tenant-withdrawal.service.test.js test/tenant-withdrawal.api.test.js test/tenant-withdrawal-isolation.test.js test/ledger-immutability.test.js test/deposit-scanner.service.test.js test/deposit-scanner-worker.test.js test/deposit-scanner-wallet-resolution.test.js test/deposit.service.test.js test/deposit-reconciliation.service.test.js test/tenant-deposit-isolation.test.js test/tenant-wallet.api.test.js test/tenant-withdrawal.api.test.js test/tenant-withdrawal.service.test.js test/withdrawal-reconciliation.service.test.js test/hd-transactions.test.js test/migrations.test.js test/dashboard-auth.test.js test/hot-wallet.service.test.js test/operational-event.repository.test.js && node --check test/ledger-immutability.test.js && node --check src/index.js && node --check src/core/deposits/deposit.service.js && node --check src/core/deposits/deposit-scanner.service.js && node --check src/core/deposits/deposit-scanner-wallets.js && node --check src/core/deposits/deposit-reconciliation.service.js && node --check src/infrastructure/database/blockchain-transaction.repository.js && node --check src/infrastructure/database/tenant-wallet.repository.js && node --check src/infrastructure/database/wallet-account.repository.js && node --check src/infrastructure/database/deposit-reconciliation.repository.js && node --check src/api/routes/tenant-wallet.routes.js && node --check src/api/routes/dashboard.routes.js && node --check src/api/middleware/dashboard-auth.js && node --check src/core/dashboard/dashboard-auth.service.js && node --check src/core/dashboard/dashboard.service.js && node --check src/core/hot-wallets/hot-wallet.service.js && node --check src/core/webhooks/webhook-endpoint.service.js && node --check src/infrastructure/database/dashboard.repository.js && node --check src/infrastructure/database/operational-event.repository.js && node --check src/core/services.js && node --check src/core/health.service.js && node --check src/core/withdrawals/withdrawal.service.js && node --check src/core/withdrawals/tenant-withdrawal-policy.service.js && node --check src/core/withdrawals/tenant-withdrawal.service.js && node --check src/api/routes/dashboard.routes.js && node --check src/core/withdrawals/withdrawal-reconciliation.service.js && node --check src/infrastructure/database/withdrawal-reconciliation.repository.js && DATABASE_URL=postgres://ci:ci@127.0.0.1:5432/blackchin_ci ENCRYPTION_KEY=$(printf 'a%.0s' {1..64}) npm run check:imports
+
+      - name: Verify migration plan
+        run: npm run db:migrate:status
+
+      - name: Apply migrations to disposable CI database
+        run: npm run db:migrate
+
+      - name: Run the complete backend test suite
+        run: npm test
+
+      - name: Check backend imports
+        run: npm run check:imports
 
   dashboard-web:
+    name: Dashboard typecheck and production build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: apps/wallet-web/package-lock.json
+
       - name: Install dashboard dependencies
         working-directory: apps/wallet-web
         run: npm ci
+
       - name: Type check dashboard
         working-directory: apps/wallet-web
         run: npm run typecheck
+
       - name: Build dashboard
         working-directory: apps/wallet-web
         env:
