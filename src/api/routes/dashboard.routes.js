@@ -26,7 +26,7 @@ import {
   requirePublicKey,
   requireSolAmount
 } from '../validation.js';
-import { badRequest } from '../../core/errors.js';
+import { badRequest, notFound, mapUniqueViolation } from '../../core/errors.js';
 import {
   hashTenantWithdrawalRequest,
   solToLamports
@@ -38,8 +38,10 @@ import {
 import { replayEvent } from '../../infrastructure/database/webhook-outbox.repository.js';
 import {
   TENANT_API_SCOPES,
+  createTenant,
   issueApiCredential,
-  revokeApiCredential
+  revokeApiCredential,
+  updateTenantStatus
 } from '../../infrastructure/database/tenant.repository.js';
 
 function parseTenantId(value) {
@@ -212,6 +214,60 @@ export async function dashboardRoutes(app) {
     limit: parseListLimit(request.query.limit, 100, 200),
     offset: parseListOffset(request.query.offset)
   }));
+
+  app.post('/tenants', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['tenantCode', 'displayName']);
+    const tenantCode = requireString(body.tenantCode, 'tenantCode', {
+      min: 2, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/
+    });
+    const displayName = requireString(body.displayName, 'displayName', { min: 1, max: 160 });
+
+    let tenant;
+    try {
+      tenant = await createTenant(db(), { tenantCode, displayName });
+    } catch (error) {
+      throw mapUniqueViolation(error, 'A tenant with this code already exists', 'TENANT_CODE_CONFLICT');
+    }
+
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant.created',
+      tenantId: tenant.id,
+      payload: {
+        tenantCode: tenant.tenantCode,
+        displayName: tenant.displayName,
+        status: tenant.status,
+        createdBy: request.dashboard.user.email
+      }
+    });
+    reply.header('Cache-Control', 'no-store');
+    return reply.code(201).send({ tenant });
+  });
+
+  app.put('/tenants/:tenantId/status', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['status']);
+    const status = requireString(body.status, 'status', { min: 1, max: 16 });
+    if (!['active', 'suspended', 'disabled'].includes(status)) {
+      throw badRequest('status must be active, suspended or disabled', 'INVALID_TENANT_STATUS');
+    }
+    const tenant = await updateTenantStatus(db(), parseTenantId(request.params.tenantId), status);
+    if (!tenant) throw notFound('Tenant not found', 'TENANT_NOT_FOUND');
+
+    await recordOperationalEventSafe(db(), {
+      eventType: 'tenant.status_changed',
+      tenantId: tenant.id,
+      payload: {
+        status: tenant.status,
+        updatedBy: request.dashboard.user.email
+      }
+    });
+    return { tenant };
+  });
 
   app.get('/security', { preHandler: authHook }, async (request) => services(request).dashboard.security({
     limit: parseListLimit(request.query.limit, 100, 200),
