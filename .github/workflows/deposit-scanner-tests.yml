@@ -7,6 +7,7 @@ on:
       - "feat/tenant-withdrawal-policy-management"
       - "hardening/phase1-ci-test-foundation"
       - "security/phase2-signed-tenant-rls"
+      - "security/phase3-ledger-atomicity"
   pull_request:
     branches:
       - main
