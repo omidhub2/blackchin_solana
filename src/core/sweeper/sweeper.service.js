@@ -61,7 +61,8 @@ function mapJob(row) {
 
 export function createSweeperService({
   db, rpc, cipher, network, commitment = 'confirmed',
-  signer = withSigningKey, log = () => {}
+  signer = withSigningKey, log = () => {},
+  executionEnabled = false
 }) {
   if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
     throw new TypeError('A PostgreSQL sweeper database is required');
@@ -162,13 +163,17 @@ export function createSweeperService({
       }
       const available = balance > fee + retained ? balance - fee - retained : 0n;
       const amount = available >= minimum ? available : 0n;
+      const recentCount = await countRecentSweepJobs(db, tenantId, source.public_key);
+      if (recentCount >= Number(policy.max_sweeps_per_wallet_day)) {
+        throw conflict('Wallet reached its configured daily sweep limit', 'SWEEP_DAILY_LIMIT_REACHED');
+      }
       const slot = await rpc.getSlot(commitment);
       if (!Number.isSafeInteger(slot) || slot < 0) throw new Error('RPC returned an invalid slot');
 
       const seed = [
         'sol', network, tenantId ?? 'legacy', policy.id,
         policy.policy_version, source.public_key,
-        policy.destination_public_key, String(slot)
+        policy.destination_public_key, balance.toString()
       ].join(':');
       const idempotencyKey = crypto.createHash('sha256').update(seed).digest('hex');
       const result = await insertSweepJob(db, {
@@ -216,6 +221,9 @@ export function createSweeperService({
       if (policy.execution_enabled !== true) {
         throw serviceUnavailable('Sweep execution is disabled; planning remains available', 'SWEEP_EXECUTION_DISABLED');
       }
+      if (executionEnabled !== true) {
+        throw serviceUnavailable('The global sweeper execution kill switch is off', 'SWEEP_EXECUTION_GLOBALLY_DISABLED');
+      }
       if (String(policy.id) !== String(job.policy_id) ||
           String(policy.policy_version) !== String(job.policy_version) ||
           policy.destination_public_key !== job.destination_public_key) {
@@ -240,23 +248,33 @@ export function createSweeperService({
             getKeypair: () => keypair,
             commitment,
             onSigned: async ({ signature }) => {
-              const persisted = await db.query(
-                `UPDATE sweep_jobs
-                    SET status = 'submitted', transaction_signature = $2,
-                        attempts = attempts + 1, updated_at = NOW()
-                  WHERE id = $1 AND status IN ('planned','ready')
-                    AND transaction_signature IS NULL`,
-                [job.id, signature]
-              );
-              if (persisted.rowCount !== 1) {
-                throw new Error('Sweep signature could not be durably persisted before broadcast');
+              const client = await db.connect();
+              try {
+                await client.query('BEGIN');
+                const persisted = await client.query(
+                  `UPDATE sweep_jobs
+                      SET status = 'submitted', transaction_signature = $2,
+                          attempts = attempts + 1, updated_at = NOW()
+                    WHERE id = $1 AND status IN ('planned','ready')
+                      AND transaction_signature IS NULL`,
+                  [job.id, signature]
+                );
+                if (persisted.rowCount !== 1) {
+                  throw new Error('Sweep signature could not be durably persisted before broadcast');
+                }
+                await recordSweepEvent(client, {
+                  jobId: job.id, tenantId, network,
+                  outcome: 'submitted', signature,
+                  details: { amountLamports: amount.toString() }
+                });
+                await client.query('COMMIT');
+                signaturePersisted = true;
+              } catch (error) {
+                await client.query('ROLLBACK').catch(() => {});
+                throw error;
+              } finally {
+                client.release();
               }
-              signaturePersisted = true;
-              await recordSweepEvent(db, {
-                jobId: job.id, tenantId, network,
-                outcome: 'submitted', signature,
-                details: { amountLamports: amount.toString() }
-              });
             }
           }), { cipher, deploymentNetwork: network });
 
@@ -351,7 +369,7 @@ export function createSweeperService({
       }
     },
 
-    async scan({ limit = 100 } = {}) {
+    async scan({ limit = 5000 } = {}) {
       const candidates = await listSweepCandidates(db, network, { limit });
       const metrics = { candidates: candidates.length, planned: 0, dust: 0, executed: 0, failed: 0 };
       for (const candidate of candidates) {
@@ -366,7 +384,7 @@ export function createSweeperService({
             continue;
           }
           metrics.planned += Number(planned.created);
-          if (candidate.execution_enabled === true) {
+          if (candidate.execution_enabled === true && executionEnabled === true) {
             await this.executeSolSweep({ jobId: planned.job.id, tenantId });
             metrics.executed += 1;
           }
