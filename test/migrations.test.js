@@ -174,6 +174,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0013'));
   assert.ok(versions.includes('0014'));
   assert.ok(versions.includes('0015'));
+  assert.ok(versions.includes('0016'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -385,4 +386,23 @@ test('0015 installs immutable ledger/idempotency guards and per-wallet withdrawa
   assert.match(sql, /Invalid idempotency status transition/i);
   assert.match(sql, /HAVING COUNT\(\*\) > 1/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
+
+test('0016 grants deposit workers only public wallet metadata and scanner/reconciliation writes', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0016_deposit_worker_runtime.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /blackchin_deposit_worker_runtime/i);
+  assert.match(sql, /GRANT SELECT \(id, public_key, tenant_id, created_at\)/i);
+  assert.match(sql, /GRANT SELECT \(id, tenant_id, status\)/i);
+  assert.match(sql, /GRANT SELECT, INSERT, UPDATE\s+ON public\.blockchain_transactions/i);
+  assert.match(sql, /deposit_scanner_cursors/i);
+  assert.match(sql, /deposit_reconciliation_cursors/i);
+  assert.match(sql, /deposit_reconciliation_events/i);
+  assert.match(sql, /webhook_outbox/i);
+  assert.match(sql, /operational_events/i);
+  assert.doesNotMatch(sql, /mnemonic_encrypted|mnemonic_iv|mnemonic_auth_tag/i);
+  assert.doesNotMatch(sql, /GRANT .* ON public\.(tenants|tenant_api_credentials|api_idempotency_keys|hot_wallets)/i);
 });
