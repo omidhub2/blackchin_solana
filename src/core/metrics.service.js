@@ -93,12 +93,20 @@ export function createMetricsService({ buckets = DEFAULT_BUCKETS, now = () => Da
       lines.push(`blackchin_http_request_duration_seconds_count${labelsToString(histogram.labels)} ${histogram.count}`);
     }
 
+    const counterTypes = new Set();
     for (const metric of counters.values()) {
-      lines.push(`# TYPE ${metric.name} counter`);
+      if (!counterTypes.has(metric.name)) {
+        lines.push(`# TYPE ${metric.name} counter`);
+        counterTypes.add(metric.name);
+      }
       lines.push(`${metric.name}${labelsToString(metric.labels)} ${metric.value}`);
     }
+    const gaugeTypes = new Set();
     for (const metric of gauges.values()) {
-      lines.push(`# TYPE ${metric.name} gauge`);
+      if (!gaugeTypes.has(metric.name)) {
+        lines.push(`# TYPE ${metric.name} gauge`);
+        gaugeTypes.add(metric.name);
+      }
       lines.push(`${metric.name}${labelsToString(metric.labels)} ${metric.value}`);
     }
 
