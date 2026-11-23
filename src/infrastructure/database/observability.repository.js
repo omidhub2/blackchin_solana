@@ -9,10 +9,16 @@ export async function getOperationalBacklog(db) {
            AND transaction_signature IS NOT NULL) AS signed_withdrawals_pending,
        (SELECT COUNT(*)::int FROM blockchain_transactions
          WHERE status = 'under_review') AS ledger_under_review,
-       (SELECT COUNT(*)::int FROM deposit_reconciliation_events
-         WHERE outcome = 'under_review') AS deposit_reconciliation_under_review,
-       (SELECT COUNT(*)::int FROM withdrawal_reconciliation_events
-         WHERE outcome = 'under_review') AS withdrawal_reconciliation_under_review,
+       (SELECT COUNT(*)::int FROM (
+          SELECT DISTINCT ON (transaction_id) transaction_id, outcome
+            FROM deposit_reconciliation_events
+           ORDER BY transaction_id, checked_at DESC, id DESC
+        ) latest_deposits WHERE outcome = 'under_review') AS deposit_reconciliation_under_review,
+       (SELECT COUNT(*)::int FROM (
+          SELECT DISTINCT ON (idempotency_key) idempotency_key, outcome
+            FROM withdrawal_reconciliation_events
+           ORDER BY idempotency_key, checked_at DESC, id DESC
+        ) latest_withdrawals WHERE outcome = 'under_review') AS withdrawal_reconciliation_under_review,
        (SELECT COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(created_at)), 0)::int
           FROM webhook_outbox
          WHERE status IN ('pending', 'failed', 'delivering')) AS oldest_webhook_age_seconds,
