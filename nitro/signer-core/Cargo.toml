@@ -1,0 +1,15 @@
+[package]
+name = "blackchin-signer-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bip39 = "2.2"
+ed25519-dalek = { version = "2.2", features = ["zeroize"] }
+hmac = "0.12"
+sha2 = "0.10"
+zeroize = "1.8"
+
+[dev-dependencies]
+bs58 = "0.5"
