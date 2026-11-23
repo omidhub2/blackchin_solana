@@ -546,7 +546,9 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         throw error;
       }
 
-      const result = await db.query(
+      let result;
+      try {
+        result = await db.query(
         `INSERT INTO tenant_withdrawal_approvals (
            tenant_id, credential_id, approval_reference, request_hash,
            wallet_public_key, destination_public_key, network, asset,
@@ -567,7 +569,16 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         [tenantId, credentialId, input.approvalReference, requestHash,
           input.walletPublicKey, input.destinationPublicKey, input.network,
           amountLamports, issuer, issuerEventId, expiresAt, input.requireApprovalScope === true]
-      );
+        );
+      } catch (cause) {
+        if (cause?.code === '23505') {
+          const error = new Error('Approval reference already exists for this tenant');
+          error.statusCode = 409;
+          error.code = 'WITHDRAWAL_APPROVAL_REFERENCE_EXISTS';
+          throw error;
+        }
+        throw cause;
+      }
       if (result.rowCount === 1) return mapApproval(result.rows[0], false);
 
       const replay = await db.query(
