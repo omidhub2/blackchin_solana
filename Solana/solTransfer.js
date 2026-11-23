@@ -815,12 +815,14 @@ export async function sendSolWithSigner({
 
   transaction.sign(senderKeypair);
 
+  if (!transaction.signature || transaction.signature.length !== 64) {
+    throw new Error('Unable to derive the signed transaction signature');
+  }
+  const locallySignedSignature = encodeBase58(transaction.signature);
+
   if (typeof onSigned === 'function') {
-    if (!transaction.signature || transaction.signature.length !== 64) {
-      throw new Error('Unable to derive the signed transaction signature');
-    }
     await onSigned({
-      signature: encodeBase58(transaction.signature),
+      signature: locallySignedSignature,
       blockhash: latestBlockhash.blockhash,
       lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
     });
@@ -835,9 +837,13 @@ export async function sendSolWithSigner({
       maxRetries: 3
     });
   } catch (error) {
-    error.signature = transaction.signature
-      ? encodeBase58(transaction.signature)
-      : undefined;
+    error.signature = locallySignedSignature;
+    throw error;
+  }
+
+  if (signature !== locallySignedSignature) {
+    const error = new Error('RPC returned a signature that does not match the locally signed transaction');
+    error.signature = locallySignedSignature;
     throw error;
   }
 
