@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: BLACKCHIN Nitro Enclave KMS foundation. Does not deploy EC2 or an enclave.
+
+Parameters:
+  EnclaveImageSha384:
+    Type: String
+    Description: Production EIF SHA-384 measurement. Never use the all-zero debug PCR.
+    AllowedPattern: '^[A-Fa-f0-9]{96}$'
+    ConstraintDescription: Must be a 96-character hexadecimal SHA-384 measurement.
+  PolicySignerPrincipalArn:
+    Type: String
+    Description: IAM role ARN for the trusted withdrawal-policy service that signs ES256 capabilities.
+    AllowedPattern: '^arn:aws:iam::[0-9]{12}:role/.+$'
+
+Resources:
+  WalletEnvelopeKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: BLACKCHIN HD wallet envelope data-key protection; Nitro-attested use only.
+      Enabled: true
+      EnableKeyRotation: true
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowOnlyMeasuredNitroEnclaveDataKeyOperations
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt NitroParentRole.Arn
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: '*'
+            Condition:
+              StringEqualsIgnoreCase:
+                kms:RecipientAttestation:ImageSha384: !Ref EnclaveImageSha384
+
+  WalletEnvelopeKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/blackchin-wallet-envelope
+      TargetKeyId: !Ref WalletEnvelopeKey
+
+  WithdrawalCapabilitySigningKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: BLACKCHIN ES256 withdrawal signing-capability key; not a wallet key.
+      Enabled: true
+      KeySpec: ECC_NIST_P256
+      KeyUsage: SIGN_VERIFY
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowPolicyControlPlaneToSignCapabilities
+            Effect: Allow
+            Principal:
+              AWS: !Ref PolicySignerPrincipalArn
+            Action:
+              - kms:Sign
+              - kms:DescribeKey
+            Resource: '*'
+
+  WithdrawalCapabilitySigningKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/blackchin-withdrawal-capability-es256
+      TargetKeyId: !Ref WithdrawalCapabilitySigningKey
+
+  NitroParentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Parent-instance role for relaying attested KMS requests; no general KMS decrypt permission.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BlackchinNitroEnvelopeKeyUse
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !GetAtt WalletEnvelopeKey.Arn
+                Condition:
+                  StringEqualsIgnoreCase:
+                    kms:RecipientAttestation:ImageSha384: !Ref EnclaveImageSha384
+
+  NitroParentInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref NitroParentRole
+
+Outputs:
+  WalletEnvelopeKeyArn:
+    Value: !GetAtt WalletEnvelopeKey.Arn
+  WalletEnvelopeKeyAlias:
+    Value: !Ref WalletEnvelopeKeyAlias
+  WithdrawalCapabilitySigningKeyArn:
+    Value: !GetAtt WithdrawalCapabilitySigningKey.Arn
+  WithdrawalCapabilitySigningKeyAlias:
+    Value: !Ref WithdrawalCapabilitySigningKeyAlias
+  NitroParentRoleArn:
+    Value: !GetAtt NitroParentRole.Arn
+  NitroParentInstanceProfile:
+    Value: !Ref NitroParentInstanceProfile
