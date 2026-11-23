@@ -161,3 +161,112 @@ test('tenant withdrawal policy enforces the daily amount limit under the tenant 
   assert.equal(result.reasonCode, 'DAILY_WITHDRAWAL_AMOUNT_LIMIT_EXCEEDED');
   assert.equal(h.calls.some((call) => call.query.includes("SET status = 'consumed'")), false);
 });
+
+
+test('policy configuration always leaves withdrawals frozen until explicit unfreeze', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ query: String(sql), params });
+      return {
+        rowCount: 1,
+        rows: [{
+          tenant_id: '42', enabled: true, emergency_frozen: true,
+          freeze_reason: 'Policy changed; explicit unfreeze required',
+          max_single_lamports: params[2], max_daily_lamports: params[3],
+          max_weekly_lamports: params[4], max_daily_count: params[5],
+          max_weekly_count: params[6], policy_version: '1',
+          updated_by: params[7], created_at: new Date(), updated_at: new Date()
+        }]
+      };
+    }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  const result = await policy.configurePolicy({
+    tenantId: '42', enabled: true,
+    maxSingleLamports: '100000000',
+    maxDailyLamports: '500000000',
+    maxWeeklyLamports: '2000000000',
+    maxDailyCount: 5, maxWeeklyCount: 20,
+    updatedBy: 'admin@example.com'
+  });
+
+  assert.equal(result.enabled, true);
+  assert.equal(result.emergencyFrozen, true);
+  assert.match(calls[0].query, /emergency_frozen = TRUE/);
+  assert.match(calls[0].query, /policy_version = tenant_withdrawal_policies\.policy_version \+ 1/);
+});
+
+test('destination activation requires a different second approver', async () => {
+  let paramsSeen;
+  const db = {
+    async query(sql, params) {
+      paramsSeen = params;
+      assert.match(String(sql), /created_by IS DISTINCT FROM \$3/);
+      return {
+        rowCount: 1,
+        rows: [{
+          id: '9', tenant_id: '42', network: 'devnet', asset: 'SOL',
+          destination_public_key: RECIPIENT, status: 'active',
+          label: 'treasury', created_by: 'maker@example.com',
+          approved_by: 'checker@example.com', approved_at: new Date(),
+          revoked_at: null, created_at: new Date()
+        }]
+      };
+    }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  const result = await policy.activateDestination({
+    tenantId: '42', destinationId: '9', approvedBy: 'checker@example.com'
+  });
+
+  assert.equal(result.status, 'active');
+  assert.deepEqual(paramsSeen, ['42', '9', 'checker@example.com']);
+});
+
+test('approval issuance is bound to an active destination, active tenant wallet and submit credential', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      const query = String(sql);
+      calls.push({ query, params });
+      if (query.includes('FROM tenant_withdrawal_destinations')) {
+        return { rows: [{ id: '9' }], rowCount: 1 };
+      }
+      if (query.includes('FROM wallet_accounts')) {
+        return { rows: [{ id: '10' }], rowCount: 1 };
+      }
+      if (query.includes('INSERT INTO tenant_withdrawal_approvals')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            tenant_id: '42', credential_id: '7',
+            approval_reference: REQUEST.approvalReference,
+            request_hash: hashTenantWithdrawalRequest(REQUEST),
+            wallet_public_key: SENDER, destination_public_key: RECIPIENT,
+            network: 'devnet', asset: 'SOL', amount_lamports: '100000000',
+            status: 'approved', issuer: 'dashboard:admin@example.com',
+            issuer_event_id: 'e2e4aef8-67f7-43f2-a6f0-85bb03fbb4a1',
+            expires_at: new Date(Date.now() + 60_000), approved_at: new Date()
+          }]
+        };
+      }
+      throw new Error('Unexpected SQL: ' + query);
+    }
+  };
+  const policy = createTenantWithdrawalPolicyService({ db });
+  const approval = await policy.issueApproval({
+    tenantId: '42', credentialId: '7',
+    approvalReference: REQUEST.approvalReference,
+    requestHash: hashTenantWithdrawalRequest(REQUEST),
+    walletPublicKey: SENDER, destinationPublicKey: RECIPIENT,
+    amountLamports: '100000000', network: 'devnet',
+    expiresAt: new Date(Date.now() + 60_000),
+    issuer: 'dashboard:admin@example.com'
+  });
+
+  assert.equal(approval.tenantId, '42');
+  assert.equal(approval.status, 'approved');
+  assert.equal(calls.length, 3);
+  assert.match(calls[2].query, /c\.scopes @> ARRAY\['withdrawals:submit'\]::text\[\]/);
+});
