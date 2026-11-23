@@ -92,7 +92,7 @@ test('tenant auth attaches trusted tenant identity and credential scopes', async
 
   assert.equal(reply.payload, null);
   assert.ok(request.services?.deps?.db);
-  assert.notEqual(request.services.deps.db, credentialDb());
+  assert.notEqual(request.services.deps.db, db);
   assert.deepEqual(request.tenant, {
     id: '4',
     code: 'acme',
