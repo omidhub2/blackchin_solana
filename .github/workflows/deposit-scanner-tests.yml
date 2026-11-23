@@ -53,6 +53,7 @@ jobs:
       API_ACCESS_KEY: ci-only-api-key-aaaaaaaaaaaaaaaaaaaaaaaa
       SOLANA_NETWORK: devnet
       SOLANA_RPC_URL: https://api.devnet.solana.com
+      SOLANA_EXPECTED_GENESIS_HASH: GH7ome3EiwEr7tu9JuTh2dpYWBJK3z69Xm1ZE3MEE6JC
       SOLANA_COMMITMENT: confirmed
       DASHBOARD_COOKIE_SECURE: "false"
     steps:
