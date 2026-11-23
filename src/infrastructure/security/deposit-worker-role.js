@@ -21,6 +21,15 @@ export async function assertDepositWorkerRuntimeRole(db) {
             has_column_privilege(session_user, 'public.hd_wallets', 'status', 'SELECT') AS can_read_hd_status,
             has_column_privilege(session_user, 'public.hd_wallets', 'mnemonic_encrypted', 'SELECT') AS can_read_encrypted_mnemonic,
             has_column_privilege(session_user, 'public.hd_wallets', 'mnemonic_iv', 'SELECT') AS can_read_mnemonic_iv,
+            has_column_privilege(session_user, 'public.hd_wallets', 'mnemonic_auth_tag', 'SELECT') AS can_read_mnemonic_auth_tag,
+            has_column_privilege(session_user, 'public.wallets', 'private_key_encrypted', 'SELECT') AS can_read_private_key,
+            has_column_privilege(session_user, 'public.wallets', 'private_key_iv', 'SELECT') AS can_read_private_key_iv,
+            has_column_privilege(session_user, 'public.wallets', 'private_key_auth_tag', 'SELECT') AS can_read_private_key_auth_tag,
+            has_table_privilege(session_user, 'public.tenants', 'SELECT') AS can_read_tenants,
+            has_table_privilege(session_user, 'public.tenant_api_credentials', 'SELECT') AS can_read_tenant_credentials,
+            has_table_privilege(session_user, 'public.api_idempotency_keys', 'SELECT') AS can_read_idempotency,
+            has_table_privilege(session_user, 'public.hot_wallets', 'SELECT') AS can_read_hot_wallets,
+            has_table_privilege(session_user, 'public.dashboard_sessions', 'SELECT') AS can_read_dashboard_sessions,
             has_table_privilege(session_user, 'public.blockchain_transactions', 'SELECT') AS can_read_ledger,
             has_table_privilege(session_user, 'public.blockchain_transactions', 'INSERT') AS can_insert_ledger,
             has_table_privilege(session_user, 'public.blockchain_transactions', 'UPDATE') AS can_update_ledger,
@@ -44,6 +53,15 @@ export async function assertDepositWorkerRuntimeRole(db) {
     role.can_read_hd_status === true &&
     role.can_read_encrypted_mnemonic === false &&
     role.can_read_mnemonic_iv === false &&
+    role.can_read_mnemonic_auth_tag === false &&
+    role.can_read_private_key === false &&
+    role.can_read_private_key_iv === false &&
+    role.can_read_private_key_auth_tag === false &&
+    role.can_read_tenants === false &&
+    role.can_read_tenant_credentials === false &&
+    role.can_read_idempotency === false &&
+    role.can_read_hot_wallets === false &&
+    role.can_read_dashboard_sessions === false &&
     role.can_read_ledger === true &&
     role.can_insert_ledger === true &&
     role.can_update_ledger === true &&
