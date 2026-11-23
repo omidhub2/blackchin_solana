@@ -4,11 +4,11 @@
 
 BLACKCHIN CORE is intended to operate wallet infrastructure and signing for multiple partner companies. It therefore handles high-impact signing authority and must treat tenant isolation as a critical security boundary.
 
-**Current limitation:** the current code authenticates requests with one shared `API_ACCESS_KEY`. It is a trusted-backend credential, not multi-tenant authentication. `hd_wallets.owner_id` is not enforced. The current API must not be exposed as a public multi-company service until tenant authentication, authorization and isolation are implemented and tested.
+**Current implementation:** partner requests use tenant-specific opaque API credentials with SHA-256 digests, scopes, expiry, revocation and tenant identity derived from authentication. Tenant-scoped repositories, composite ownership constraints and signer-boundary checks are implemented. `owner_id` remains optional business metadata; tenant ownership is enforced through `tenant_id`. Production exposure is still gated on the remaining hardening, KMS/HSM, cloud, database-privilege, load/concurrency and independent security-review work below.
 
 Partner companies remain responsible for authenticating their end users and authorizing customer withdrawals. BLACKCHIN independently validates the authenticated tenant, its wallet ownership, configured limits, destination policy and infrastructure risk controls before signing.
 
-## 2. Tenant authentication requirements (target)
+## 2. Tenant authentication and remaining hardening
 
 - Unique credentials per tenant and environment; never one global partner key.
 - Store only strong hashes of API secrets; reveal a secret only at issuance/rotation.
