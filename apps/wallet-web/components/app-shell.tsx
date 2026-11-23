@@ -96,7 +96,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <nav className="flex-1 space-y-6 overflow-y-auto pb-6">
         {navigation.map((group) => (
           <div key={group.group}>
-            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">{group.group}</p>
+            <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-600">{group.group}</p>
             <div className="space-y-1">
               {group.items.map((item) => {
                 const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
@@ -107,7 +107,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     href={item.href}
                     onClick={onNavigate}
                     className={clsx(
-                      'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] transition',
+                      'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition',
                       active
                         ? 'border border-cyan-400/20 bg-gradient-to-r from-cyan-400/10 to-transparent text-cyan-100'
                         : 'border border-transparent text-slate-400 hover:bg-white/[0.04] hover:text-slate-100'
@@ -123,7 +123,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         ))}
       </nav>
-      <div className="panel-muted m-2 p-3 text-[11px] text-slate-500">
+      <div className="panel-muted m-2 p-3 text-xs text-slate-500">
         <div className="flex items-center gap-2 text-slate-300">
           <Cpu size={14} className="text-cyan-300" />
           Solana native SOL
@@ -150,7 +150,7 @@ function Topbar({ onOpenMenu, user, onLogout }: {
           <button type="button" onClick={onOpenMenu} className="btn-ghost !p-2 lg:hidden" aria-label="Menu">
             <Menu size={18} />
           </button>
-          <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] text-slate-400 sm:flex">
+          <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-slate-400 sm:flex">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             {t('network.cluster')}: <span className="text-slate-200">devnet</span>
           </div>
@@ -174,7 +174,7 @@ function Topbar({ onOpenMenu, user, onLogout }: {
             <button
               type="button"
               onClick={() => setMenuOpen((value) => !value)}
-              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-slate-300 hover:border-cyan-400/30"
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-sm text-slate-300 hover:border-cyan-400/30"
             >
               <span className="grid h-6 w-6 place-items-center rounded-lg bg-gradient-to-br from-cyan-400/30 to-violet-500/30 text-[10px] font-semibold text-cyan-100">
                 {user.displayName.slice(0, 1).toUpperCase()}
