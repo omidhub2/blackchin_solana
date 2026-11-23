@@ -31,6 +31,12 @@ function walletDb({ account = true, parent = true } = {}) {
           recovery_token_expires_at: null, created_at: new Date(), updated_at: new Date()
         }], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
+      if (query.includes('INSERT INTO api_idempotency_keys')) {
+        return { rows: [{ id: '900' }], rowCount: 1 };
+      }
+      if (query.includes('UPDATE api_idempotency_keys')) {
+        return { rows: [], rowCount: 1 };
+      }
       throw new Error('Unexpected SQL: ' + query);
     }
   };
@@ -62,7 +68,7 @@ test('tenant withdrawal history and detail queries always constrain tenant owner
   assert.ok(calls.every((call) => call.query.includes('WHERE tenant_id = $1')));
   assert.ok(calls.every((call) => call.params[0] === '42'));
 });
-test('tenant withdrawal policy denial happens before idempotency reservation or signing', async () => {
+test('tenant withdrawal policy denial fails its idempotency reservation and never signs', async () => {
   const db = walletDb();
   let policyCalls = 0;
   const service = createTenantWithdrawalService({
@@ -76,7 +82,8 @@ test('tenant withdrawal policy denial happens before idempotency reservation or 
     approvalReference: 'partner-approval-001'
   }), (error) => error.code === 'WITHDRAWAL_NOT_AUTHORIZED');
   assert.equal(policyCalls, 1);
-  assert.equal(db.calls.some(({ query }) => query.includes('INSERT INTO api_idempotency_keys')), false);
+  assert.equal(db.calls.some(({ query }) => query.includes('INSERT INTO api_idempotency_keys')), true);
+  assert.equal(db.calls.some(({ query }) => query.includes("SET status = 'failed'")), true);
 });
 
 test('tenant withdrawal fails closed when no trusted policy provider is configured', async () => {
