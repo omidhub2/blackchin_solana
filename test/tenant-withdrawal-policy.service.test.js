@@ -166,6 +166,7 @@ test('tenant withdrawal policy enforces the daily amount limit under the tenant 
 test('policy configuration always leaves withdrawals frozen until explicit unfreeze', async () => {
   const calls = [];
   const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
     async query(sql, params) {
       calls.push({ query: String(sql), params });
       return {
@@ -200,6 +201,7 @@ test('policy configuration always leaves withdrawals frozen until explicit unfre
 test('destination activation requires a different second approver', async () => {
   let paramsSeen;
   const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
     async query(sql, params) {
       paramsSeen = params;
       assert.match(String(sql), /created_by IS DISTINCT FROM \$3/);
@@ -227,6 +229,7 @@ test('destination activation requires a different second approver', async () => 
 test('approval issuance is bound to an active destination, active tenant wallet and submit credential', async () => {
   const calls = [];
   const db = {
+    async connect() { throw new Error('transaction not needed in this test'); },
     async query(sql, params) {
       const query = String(sql);
       calls.push({ query, params });
