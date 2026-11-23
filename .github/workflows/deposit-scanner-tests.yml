@@ -9,6 +9,7 @@ on:
       - "security/phase2-signed-tenant-rls"
       - "security/phase3-ledger-atomicity"
       - "security/phase4-worker-reconciliation"
+      - "reliability/phase5-end-to-end"
   pull_request:
     branches:
       - main
