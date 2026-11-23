@@ -425,7 +425,7 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       const amountLamports = assertLamports(input.amountLamports);
       const requestHash = assertHash(input.requestHash);
       const issuer = String(input.issuer ?? '').trim();
-      const issuerEventId = crypto.randomUUID();
+      const issuerEventId = input.issuerEventId ?? crypto.randomUUID();
       if (requestHash !== hashTenantWithdrawalRequest({
         fromPublicKey: input.walletPublicKey,
         toPublicKey: input.destinationPublicKey,
@@ -436,6 +436,12 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         throw new TypeError('requestHash does not match the approval binding');
       }
       if (!issuer || issuer.length > 128) throw new TypeError('issuer is required');
+      if (typeof issuerEventId !== 'string' || !/^[A-Za-z0-9._:-]{8,128}$/.test(issuerEventId)) {
+        throw new TypeError('issuerEventId is invalid');
+      }
+      if (input.requireApprovalScope !== undefined && typeof input.requireApprovalScope !== 'boolean') {
+        throw new TypeError('requireApprovalScope must be boolean');
+      }
       if (typeof input.approvalReference !== 'string' ||
           !/^[A-Za-z0-9._:-]{8,128}$/.test(input.approvalReference)) {
         throw new TypeError('approvalReference is invalid');
@@ -514,12 +520,13 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
           WHERE c.tenant_id = $1 AND c.id = $2
             AND c.status = 'active' AND t.status = 'active'
             AND c.scopes @> ARRAY['withdrawals:submit']::text[]
+            AND ($12::boolean = FALSE OR c.scopes @> ARRAY['withdrawals:approve']::text[])
          RETURNING tenant_id, credential_id, approval_reference, request_hash,
                    wallet_public_key, destination_public_key, network, asset,
                    amount_lamports, status, issuer, issuer_event_id, expires_at, approved_at`,
         [tenantId, credentialId, input.approvalReference, requestHash,
           input.walletPublicKey, input.destinationPublicKey, input.network,
-          amountLamports, issuer, issuerEventId, expiresAt]
+          amountLamports, issuer, issuerEventId, expiresAt, input.requireApprovalScope === true]
       );
       if (result.rowCount !== 1) {
         const error = new Error('Active tenant credential with withdrawals:submit scope was not found');
