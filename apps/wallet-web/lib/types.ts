@@ -268,6 +268,23 @@ export type WithdrawalDestination = {
   createdAt: string;
 };
 
+export type WithdrawalApproval = {
+  tenantId: string;
+  credentialId: string;
+  approvalReference: string;
+  walletPublicKey: string;
+  destinationPublicKey: string;
+  network: string;
+  asset: 'SOL';
+  amountLamports: string;
+  status: 'approved' | 'consumed' | 'revoked' | 'expired';
+  issuer: string;
+  issuerEventId: string;
+  expiresAt: string;
+  approvedAt: string;
+  consumedAt: string | null;
+};
+
 export type NetworkResponse = {
   network: string;
   commitment: string;
