@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "fix/withdrawal-deposit-safety"
+      - "feat/tenant-withdrawal-policy-management"
   pull_request:
     branches:
       - main
