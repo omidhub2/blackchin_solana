@@ -10,6 +10,7 @@ on:
       - "security/phase3-ledger-atomicity"
       - "security/phase4-worker-reconciliation"
       - "reliability/phase5-end-to-end"
+      - "observability/phase6-production-readiness"
   pull_request:
     branches:
       - main
