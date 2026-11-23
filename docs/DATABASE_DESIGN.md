@@ -47,6 +47,7 @@ Not allowed:
 | 0013 | Dashboard operators/sessions, operational events, tenant webhook endpoints, hot wallets |
 | 0014 | HMAC-verified tenant context, restricted runtime role and PostgreSQL row-level policies |
 | 0015 | Immutable ledger/idempotency identity, legal state transitions and one in-flight withdrawal per source wallet |
+| 0016 | Least-privilege cross-tenant deposit-worker role with column-level wallet metadata grants |
 
 Migrations are forward-only and checksum-verified. Never edit an applied
 migration.
@@ -71,7 +72,28 @@ control-plane workers retain their explicit administrative path. Tenant API
 connections must never use that owner login. Legacy NULL-tenant records remain
 unassigned and invisible to the tenant runtime role.
 
-## 4. Core tables
+## 4. Background worker database boundary
+
+Migration 0016 creates `blackchin_deposit_worker_runtime`. The deposit scanner
+and deposit reconciliation use a dedicated `DEPOSIT_WORKER_DATABASE_URL`
+connection pool, never the API/migration pool.
+
+The deployment login must be a non-superuser with `BYPASSRLS` and membership
+in the restricted worker role. BYPASSRLS is needed only because the scanner
+intentionally processes addresses across tenant boundaries; the role itself
+has narrowly scoped grants. It can read public wallet addresses, tenant
+attribution and lifecycle metadata, write verified blockchain transaction
+records, advance scanner/reconciliation cursors, append reconciliation
+evidence, and emit deposit webhook/operational events.
+
+The worker role is not granted encrypted HD mnemonic, IV or authentication-tag
+columns; tenant credentials; idempotency reservations; dashboard sessions;
+hot-wallet/signing tables; or webhook delivery/update permissions. Startup
+checks role attributes, membership and all required privileges, and verifies
+that encrypted mnemonic columns remain inaccessible. The scanner's wallet
+resolver reads parent status only and does not load encrypted root material.
+
+## 5. Core tables
 
 ### `tenants`
 
