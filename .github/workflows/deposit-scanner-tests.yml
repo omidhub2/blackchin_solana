@@ -6,6 +6,7 @@ on:
       - "fix/withdrawal-deposit-safety"
       - "feat/tenant-withdrawal-policy-management"
       - "hardening/phase1-ci-test-foundation"
+      - "security/phase2-signed-tenant-rls"
   pull_request:
     branches:
       - main
@@ -38,6 +39,8 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/blackchin_ci
+      TENANT_DATABASE_URL: postgresql://blackchin_ci_tenant:ci-tenant-password@127.0.0.1:5432/blackchin_ci
+      TENANT_CONTEXT_HMAC_KEY: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       API_ACCESS_KEY: ci-only-api-key-aaaaaaaaaaaaaaaaaaaaaaaa
       SOLANA_NETWORK: devnet
@@ -62,6 +65,25 @@ jobs:
 
       - name: Apply migrations to disposable CI database
         run: npm run db:migrate
+
+      - name: Provision restricted tenant runtime login
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+          await pool.query(`
+            DO $
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'blackchin_ci_tenant') THEN
+                CREATE ROLE blackchin_ci_tenant LOGIN PASSWORD 'ci-tenant-password'
+                  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+              END IF;
+            END
+            $;
+          `);
+          await pool.query('GRANT blackchin_tenant_runtime TO blackchin_ci_tenant');
+          await pool.end();
+          NODE
 
       - name: Run the complete backend test suite
         run: npm test
