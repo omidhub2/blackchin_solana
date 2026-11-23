@@ -5,16 +5,27 @@
  * job. Execution is opt-in, uses the existing HD signer, persists the signed
  * signature before broadcast, and never tops up a child wallet automatically.
  */
+import crypto from 'node:crypto';
+import { PublicKey } from '@solana/web3.js';
 import { conflict, notFound, serviceUnavailable } from '../errors.js';
 import { withSigningKey } from '../../infrastructure/security/wallet-signer.js';
 import {
   findSweepPolicy,
   findSweepSource,
   findSweepJob,
+  findSweepJobByIdempotencyKey,
   insertSweepJob,
   listSweepJobs,
+  listSweepCandidates,
+  listSubmittedSweepJobs,
+  countRecentSweepJobs,
+  saveSweepPolicy,
   recordSweepEvent
 } from '../../infrastructure/database/sweeper.repository.js';
+import {
+  insertBlockchainTransaction,
+  findTransactionBySignature
+} from '../../infrastructure/database/blockchain-transaction.repository.js';
 
 const MAX_SAFE_LAMPORTS = BigInt(Number.MAX_SAFE_INTEGER);
 
