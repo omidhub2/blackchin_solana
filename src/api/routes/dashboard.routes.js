@@ -357,15 +357,10 @@ export async function dashboardRoutes(app) {
   app.delete('/tenants/:tenantId/withdrawal-policy', {
     preHandler: [authHook, adminGuard, mutationLimiter]
   }, async (request) => {
-    const result = await services(request).tenantWithdrawalPolicy.deletePolicy({
-      tenantId: parseTenantId(request.params.tenantId)
+    return services(request).tenantWithdrawalPolicy.deletePolicy({
+      tenantId: parseTenantId(request.params.tenantId),
+      deletedBy: request.dashboard.user.email
     });
-    await recordOperationalEventSafe(db(), {
-      eventType: 'tenant_withdrawal.policy_deleted',
-      tenantId: result.tenantId,
-      payload: { deletedBy: request.dashboard.user.email }
-    });
-    return result;
   });
 
   app.post('/tenants/:tenantId/withdrawal-policy/freeze', {
