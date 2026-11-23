@@ -10,10 +10,10 @@
  * message before deriving a child key and signing.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { PublicKey } from '@solana/web3.js';
 
 const MAX_MESSAGE_BYTES = 1232;
 const SIGNATURE_BYTES = 64;
-const PUBLIC_KEY_BYTES = 32;
 
 function assertPositiveId(value, name) {
   const normalized = String(value ?? '');
@@ -72,8 +72,16 @@ export function createRemoteSignerClient({
     if (!Number.isSafeInteger(accountIndex) || accountIndex < 0 || accountIndex > 0x7fffffff) {
       throw new TypeError('accountIndex is outside the supported hardened derivation range');
     }
-    if (typeof input.publicKey !== 'string' || input.publicKey.length < 32 || input.publicKey.length > 64) {
+    if (typeof input.publicKey !== 'string' || input.publicKey.length < 32 || input.publicKey.length > 44) {
       throw new TypeError('publicKey is invalid');
+    }
+    try {
+      const parsedPublicKey = new PublicKey(input.publicKey);
+      if (parsedPublicKey.toBase58() !== input.publicKey || parsedPublicKey.toBytes().length !== 32) {
+        throw new Error('non-canonical public key');
+      }
+    } catch {
+      throw new TypeError('publicKey must be a canonical Solana base58 public key');
     }
     if (typeof input.network !== 'string' || !['devnet', 'testnet', 'mainnet-beta'].includes(input.network)) {
       throw new TypeError('network is invalid');
@@ -123,7 +131,7 @@ export function createRemoteSignerClient({
     if (!response?.ok) {
       // Never propagate remote response bodies: they may contain sensitive diagnostics.
       const error = new Error('Remote signer rejected or could not process the signing request');
-      error.statusCode = response?.status === 401 || response?.status === 403 ? 503 : 503;
+      error.statusCode = 503;
       error.code = response?.status === 401 || response?.status === 403
         ? 'REMOTE_SIGNER_AUTH_FAILED'
         : 'REMOTE_SIGNER_REJECTED';
