@@ -38,17 +38,27 @@ signer is application-layer encrypted key material and is reported as
 - Deposit reconciliation worker.
 - Durable operational events and webhook outbox emission.
 
-## Phase 5 — Withdrawal infrastructure (complete and tested)
+## Phase 5 — Withdrawal infrastructure (implemented; CI verified)
 
-- Tenant policy preflight (fail closed when no provider is configured).
-- Tenant-scoped idempotency with request binding.
-- Signature persistence before broadcast.
-- Reconciliation of ambiguous outcomes.
-- Hot-wallet guard.
-- Immutable transaction evidence and append-only reconciliation events.
+- Runtime tenant policy provider wired into the service composition root.
+- Per-tenant policy-row lock serializes UTC daily/weekly amount and count limits.
+- Fail-closed behavior for absent/disabled/frozen policy and zero/unconfigured limits.
+- Native-SOL destination allowlist with pending/active/revoked lifecycle and
+  second-admin activation.
+- One-time approvals bound to tenant credential, active HD child wallet,
+  allowlisted destination, network, SOL asset, exact lamport amount and
+  canonical request hash; 15-minute maximum expiry.
+- Approval consumption/revocation and append-only policy decision audit.
+- Policy edits and emergency freezes invalidate unused approvals.
+- Idempotency reservation precedes policy authorization; completed retries
+  replay without re-consuming the approval.
+- Signature persistence before broadcast, ambiguous-outcome reconciliation,
+  hot-wallet guard and immutable transaction evidence.
 
-**External blocker:** a reviewed `tenantWithdrawalPolicy.authorize` provider
-must be deployed before public withdrawal submission is enabled.
+**Production gates remain:** verify migrations against the real PostgreSQL
+environment, review database roles/privileges, run concurrent withdrawal and
+failure-injection tests, and complete an independent security review before
+enabling mainnet withdrawals.
 
 ## Phase 6 — API and webhooks (complete and tested)
 
@@ -65,7 +75,7 @@ must be deployed before public withdrawal submission is enabled.
 
 - `apps/wallet-web/` Next.js App Router + TypeScript + Tailwind.
 - Overview, wallets, HD, child, hot, addresses, deposits, withdrawals,
-  transactions, activity, webhooks, credentials, network, security, settings.
+  transactions, activity, webhooks, credentials, network, security controls, settings.
 - Responsive layout, dark infrastructure theme, charts, QR codes, copy actions.
 - English and Persian with full RTL.
 
@@ -92,15 +102,15 @@ must be deployed before public withdrawal submission is enabled.
 - **External blocker:** cloud accounts, managed PostgreSQL, secret manager,
   TLS ingress and RPC quotas are not available in this environment.
 
-## Phase 11 — Verification (complete for this environment)
+## Phase 11 — Verification (CI verified for current branch)
 
-- Backend: `node --test` — 237 tests passing.
-- Import graph: `npm run check:imports` — 0 problems.
-- Frontend: `npx tsc --noEmit` and `next build` — successful.
+- Backend regression workflow includes tenant withdrawal policy service/API tests, scanner, ledger, reconciliation and migration suites.
+- Dashboard workflow type-checks and builds the Next.js application.
+- Exact pass counts and commit status are tracked in GitHub Actions; do not infer them from this roadmap.
 
 ## Remaining work before public production
 
-1. Deploy and review the tenant withdrawal policy provider.
+1. Apply and verify policy migrations in staging; configure each tenant explicitly and complete independent security review.
 2. Integrate KMS/HSM or an isolated signer service.
 3. Provision cloud infrastructure, secrets and RPC providers.
 4. Run concurrency, failure-injection, restore and chain-reorg drills.
