@@ -29,9 +29,9 @@ export function StatCard({
     <div className="panel panel-hover relative overflow-hidden p-5 md:p-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
-          <p className="mt-3 text-[26px] font-bold tabular-nums tracking-tight text-white md:text-[28px]">{value}</p>
-          {hint ? <p className="mt-2 text-xs text-slate-400">{hint}</p> : null}
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+          <p className="mt-3 text-[28px] font-bold tabular-nums tracking-tight text-white md:text-[30px]">{value}</p>
+          {hint ? <p className="mt-2 text-sm text-slate-400">{hint}</p> : null}
         </div>
         <span className={clsx('rounded-xl border border-white/[0.09] bg-white/[0.045] p-3 shadow-inner', accents[accent])}>
           <Icon size={18} />
