@@ -111,6 +111,16 @@ signing should fail closed until a reviewed signer boundary is deployed.
 9. On ambiguity, keep the intent `processing` and require reconciliation.
 10. Never blindly rebroadcast; write immutable transaction evidence and
     append-only reconciliation events.
+11. A PostgreSQL partial unique index permits only one `processing` withdrawal
+    per source wallet (tenant-scoped or legacy). A signed/ambiguous reservation
+    continues to occupy that slot until reconciliation.
+12. Ledger identity, ownership, amounts and idempotency request identity are
+    immutable at the database layer. Status changes must follow an explicit
+    transition graph; a persisted signature and completed response cannot be
+    replaced or cleared.
+13. The ledger row and idempotency completion are committed in one database
+    transaction after broadcast. Any failure leaves the signed reservation in
+    `processing` for reconciliation.
 
 The dashboard control plane issues approvals only for active tenant credentials
 with `withdrawals:submit`, active HD child wallets and active destinations.
@@ -122,7 +132,27 @@ canonical request hash; they expire within 15 minutes. Destination activation
 requires a second admin. Policy edits freeze withdrawals and revoke unused
 approvals; unfreeze is an explicit admin action.
 
-## 6. Deposit verification
+## 6. Ledger and concurrency integrity
+
+- Migration 0015 adds one-in-flight-withdrawal partial unique indexes for
+  tenant and legacy source wallets. A second distinct idempotency key for the
+  same wallet receives a conflict instead of reaching the signer.
+- A preflight query makes migration fail closed if multiple processing
+  withdrawals already exist for one source wallet; those records require
+  reconciliation before the index can be installed.
+- Ledger identity, tenant ownership and monetary fields are immutable. The
+  lifecycle trigger permits only explicit forward/review transitions.
+- Idempotency request identity is immutable; status may move only from
+  `processing` to `completed` or `failed`. A persisted signature cannot be
+  replaced/cleared and a stored response cannot be overwritten.
+- Both legacy and tenant withdrawal flows commit the ledger row and completed
+  idempotency response atomically after broadcast. On any failure, the signed
+  reservation stays processing and must be reconciled, never retried with a new
+  key.
+- Signing lock timeout is applied after `BEGIN` in the same transaction as
+  `FOR SHARE` row locks.
+
+## 7. Deposit verification
 
 - Fetch and parse the transaction from RPC.
 - Reject failed transactions.
@@ -132,7 +162,7 @@ approvals; unfreeze is an explicit admin action.
 - Treat RPC timeouts as unknown, not as failure.
 - Move contradictory observations to `under_review`.
 
-## 7. Webhooks
+## 8. Webhooks
 
 - Tenant endpoints must be public HTTPS; private, loopback, link-local and
   metadata destinations are rejected.
@@ -144,7 +174,7 @@ approvals; unfreeze is an explicit admin action.
 - Secrets are encrypted at rest and returned only once.
 - Payload validation rejects sensitive field names.
 
-## 8. Input, output and transport
+## 9. Input, output and transport
 
 - Strict field validation and unknown-field rejection.
 - Parameterized SQL only.
@@ -154,7 +184,7 @@ approvals; unfreeze is an explicit admin action.
 - Dashboard responses set `Cache-Control: no-store` for secrets and sessions.
 - Secrets are redacted from Fastify logs.
 
-## 9. Logging and audit
+## 10. Logging and audit
 
 Never log:
 
@@ -168,7 +198,7 @@ Operational events, policy decisions, reconciliation evidence and transaction
 evidence provide an auditable trail. Database superusers can bypass triggers;
 production privileges must separate migration ownership from application DML.
 
-## 10. Threat model
+## 11. Threat model
 
 | Threat | Control |
 |---|---|
@@ -182,7 +212,7 @@ production privileges must separate migration ownership from application DML.
 | RPC lying or timing out | independent verification, unknown state, reconciliation |
 | Key misuse | freeze, limits, audit, dual control (target) |
 
-## 11. Production release gates
+## 12. Production release gates
 
 Do not declare public production readiness until:
 
