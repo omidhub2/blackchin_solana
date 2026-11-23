@@ -392,6 +392,7 @@ try {
       tenant: tenantPool,
       depositWorker: depositWorkerPool
     },
+    metrics,
     rpc: services.deps.rpc,
     rpcRequired: process.env.HEALTH_RPC_REQUIRED !== 'false',
     scanner: worker,
