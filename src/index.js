@@ -36,6 +36,12 @@ if (tenantDatabaseUrl) {
     idleTimeoutMillis: 30_000,
     application_name: 'blackchin-tenant-api'
   });
+  tenantPool.on('error', (error) => {
+    console.error('[TENANT POSTGRESQL POOL ERROR]', {
+      code: error.code ?? 'UNKNOWN',
+      message: error.message
+    });
+  });
 }
 
 const host = process.env.API_HOST || '127.0.0.1';
@@ -335,6 +341,7 @@ try {
   console.log(`Wallet API listening on http://${host}:${port}`);
 } catch (error) {
   console.error('[API STARTUP FAILED]', error.message);
+  if (tenantPool) await tenantPool.end().catch(() => { });
   await disconnectPostgres().catch(() => { });
   process.exitCode = 1;
 }
