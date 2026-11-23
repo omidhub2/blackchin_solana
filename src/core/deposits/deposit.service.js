@@ -22,8 +22,8 @@ import {
 } from '../../infrastructure/database/blockchain-transaction.repository.js';
 import { findAccountByPublicKey } from '../../infrastructure/database/wallet-account.repository.js';
 import { resolveDepositWalletForTenant } from '../../infrastructure/database/tenant-wallet.repository.js';
-import { emitEvent } from '../../infrastructure/database/webhook-outbox.repository.js';
-import { recordOperationalEvent } from '../../infrastructure/database/operational-event.repository.js';
+import { emitEvent, emitEventSafe } from '../../infrastructure/database/webhook-outbox.repository.js';
+import { recordOperationalEvent, recordOperationalEventSafe } from '../../infrastructure/database/operational-event.repository.js';
 
 const COMMITMENT_RANK = { detected: 1, confirming: 2, confirmed: 3, credited: 4 };
 
