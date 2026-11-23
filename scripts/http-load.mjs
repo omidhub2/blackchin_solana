@@ -40,6 +40,7 @@ if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 100) 
 const samples = [];
 const statusCounts = new Map();
 let errors = 0;
+let httpErrors = 0;
 let running = true;
 const deadline = Date.now() + durationSeconds * 1000;
 const headers = apiKey ? { 'x-api-key': apiKey } : {};
@@ -57,6 +58,7 @@ async function worker() {
       await response.arrayBuffer();
       samples.push(performance.now() - started);
       statusCounts.set(response.status, (statusCounts.get(response.status) ?? 0) + 1);
+      if (response.status < 200 || response.status >= 400) httpErrors += 1;
     } catch {
       errors += 1;
     }
@@ -79,6 +81,7 @@ const report = {
   requests: total,
   successfulResponses: samples.length,
   transportErrors: errors,
+  httpErrors,
   requestsPerSecond: Number((total / durationSeconds).toFixed(2)),
   latencyMs: {
     p50: percentile(0.50),
@@ -89,6 +92,6 @@ const report = {
   statusCodes: Object.fromEntries([...statusCounts.entries()].sort(([a], [b]) => a - b))
 };
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-if (errors > 0 || [...statusCounts.keys()].some((status) => status >= 500)) {
+if (errors > 0 || httpErrors > 0) {
   process.exitCode = 1;
 }
