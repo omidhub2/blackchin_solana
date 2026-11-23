@@ -246,8 +246,11 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       };
     },
 
-    async deletePolicy({ tenantId } = {}) {
+    async deletePolicy({ tenantId, deletedBy } = {}) {
       tenantId = assertId(tenantId, 'tenantId');
+      if (typeof deletedBy !== 'string' || !deletedBy.trim() || deletedBy.length > 128) {
+        throw new TypeError('deletedBy is required');
+      }
       const client = await db.connect();
       try {
         await client.query('BEGIN');
@@ -272,6 +275,11 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         await client.query(
           'DELETE FROM tenant_withdrawal_policies WHERE tenant_id = $1',
           [tenantId]
+        );
+        await client.query(
+          `INSERT INTO operational_events (event_id, tenant_id, event_type, payload)
+           VALUES ($1, $2, 'tenant_withdrawal.policy_deleted', $3::jsonb)`,
+          [crypto.randomUUID(), tenantId, JSON.stringify({ deletedBy })]
         );
         await client.query('COMMIT');
         return { tenantId, deleted: true };
