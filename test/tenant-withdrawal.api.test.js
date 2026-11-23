@@ -92,7 +92,7 @@ test('partner approval issuance requires its separate scope and is bound to auth
     assert.equal(issued[1].credentialId, '1');
     assert.equal(issued[1].amountLamports, '250000000');
     assert.equal(issued[1].network, 'devnet');
-    assert.equal(issued[1].issuer, 'tenant_credential:credential-1');
+    assert.equal(issued[1].issuer, 'tenant_credential:1');
     assert.equal(issued[1].issuerEventId, 'partner-approval-key-001');
     assert.equal(issued[1].requireApprovalScope, true);
     assert.match(issued[1].requestHash, /^[a-f0-9]{64}$/);
@@ -175,7 +175,7 @@ test('tenant withdrawal submit requires idempotency key and a partner approval r
     assert.equal(h.calls[0][1].tenantId, '42');
     assert.equal(h.calls[0][1].idempotencyKey, 'tenant-withdrawal-key-001');
     assert.equal(h.calls[0][1].approvalReference, 'partner-approval-001');
-    assert.equal(h.calls[0][1].credentialId, 'credential-1');
+    assert.equal(h.calls[0][1].credentialId, '1');
   } finally { await app.close(); }
 });
 
