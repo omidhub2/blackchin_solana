@@ -67,6 +67,16 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
       row.transaction_signature = params[1];
       return { rows: [], rowCount: 1 };
     }
+    if (text.includes('UPDATE sweep_jobs') && text.includes("status = 'under_review'")) {
+      const row = jobs.get(String(params[0]));
+      if (row) row.status = 'under_review';
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
+    if (text.includes('UPDATE sweep_jobs') && text.includes("status = 'failed'")) {
+      const row = jobs.get(String(params[0]));
+      if (row) row.status = 'failed';
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
     if (text.includes('UPDATE sweep_jobs') && text.includes("status = 'completed'")) {
       const row = jobs.get(String(params[0]));
       if (!row || row.status !== 'submitted' || row.transaction_signature !== params[1]) return { rows: [], rowCount: 0 };
