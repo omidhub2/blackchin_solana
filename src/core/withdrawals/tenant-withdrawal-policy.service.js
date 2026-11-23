@@ -110,6 +110,11 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
         }
       }
       if (typeof input.enabled !== 'boolean') throw new TypeError('enabled must be boolean');
+      if (BigInt(input.maxSingleLamports) > BigInt(input.maxDailyLamports) ||
+          BigInt(input.maxDailyLamports) > BigInt(input.maxWeeklyLamports) ||
+          input.maxDailyCount > input.maxWeeklyCount) {
+        throw new TypeError('Withdrawal limits must be ordered: single <= daily <= weekly');
+      }
 
       const result = await db.query(
         `INSERT INTO tenant_withdrawal_policies (
@@ -341,6 +346,15 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       const requestHash = assertHash(input.requestHash);
       const issuer = String(input.issuer ?? '').trim();
       const issuerEventId = crypto.randomUUID();
+      if (requestHash !== hashTenantWithdrawalRequest({
+        fromPublicKey: input.walletPublicKey,
+        toPublicKey: input.destinationPublicKey,
+        amountLamports,
+        network: input.network,
+        approvalReference: input.approvalReference
+      })) {
+        throw new TypeError('requestHash does not match the approval binding');
+      }
       if (!issuer || issuer.length > 128) throw new TypeError('issuer is required');
       if (typeof input.approvalReference !== 'string' ||
           !/^[A-Za-z0-9._:-]{8,128}$/.test(input.approvalReference)) {
@@ -439,6 +453,11 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       const toPublicKey = input.toPublicKey;
       const network = input.network;
 
+      if (requestHash !== hashTenantWithdrawalRequest({
+        fromPublicKey, toPublicKey, amountLamports, network, approvalReference
+      })) {
+        throw new TypeError('requestHash does not match the withdrawal request');
+      }
       if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) {
         throw new TypeError('idempotencyKey is invalid');
       }
