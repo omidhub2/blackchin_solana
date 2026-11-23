@@ -237,6 +237,37 @@ export type PolicyRecord = {
   updatedAt: string;
 };
 
+export type TenantWithdrawalPolicy = {
+  tenantId: string;
+  enabled: boolean;
+  emergencyFrozen: boolean;
+  freezeReason: string | null;
+  maxSingleLamports: string;
+  maxDailyLamports: string;
+  maxWeeklyLamports: string;
+  maxDailyCount: number;
+  maxWeeklyCount: number;
+  policyVersion: string;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WithdrawalDestination = {
+  id: string;
+  tenantId: string;
+  network: string;
+  asset: 'SOL';
+  destinationPublicKey: string;
+  status: 'pending' | 'active' | 'revoked';
+  label: string | null;
+  createdBy: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
 export type NetworkResponse = {
   network: string;
   commitment: string;
