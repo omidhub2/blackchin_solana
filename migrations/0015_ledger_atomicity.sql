@@ -135,10 +135,10 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    IF OLD.transaction_signature IS NOT NULL
-       AND NEW.transaction_signature IS DISTINCT FROM OLD.transaction_signature THEN
+    IF NEW.transaction_signature IS DISTINCT FROM OLD.transaction_signature
+       AND (OLD.transaction_signature IS NOT NULL OR OLD.status <> 'processing') THEN
         RAISE EXCEPTION
-            'a persisted transaction signature cannot be replaced or cleared (row id %)',
+            'a transaction signature may only be persisted once while processing (row id %)',
             OLD.id
             USING ERRCODE = 'check_violation';
     END IF;
@@ -147,6 +147,32 @@ BEGIN
        AND NEW.response_json IS DISTINCT FROM OLD.response_json THEN
         RAISE EXCEPTION
             'a completed idempotency response cannot be replaced (row id %)',
+            OLD.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF NEW.response_json IS DISTINCT FROM OLD.response_json
+       AND (OLD.status <> 'processing' OR NEW.status <> 'completed') THEN
+        RAISE EXCEPTION
+            'an idempotency response may only be stored when completing a processing request (row id %)',
+            OLD.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF OLD.operation = 'withdrawal'
+       AND OLD.transaction_signature IS NOT NULL
+       AND NEW.status = 'failed' THEN
+        RAISE EXCEPTION
+            'a signed withdrawal cannot be marked failed without reconciliation (row id %)',
+            OLD.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF OLD.operation = 'withdrawal'
+       AND NEW.status = 'completed'
+       AND NEW.transaction_signature IS NULL THEN
+        RAISE EXCEPTION
+            'a withdrawal cannot complete without a persisted transaction signature (row id %)',
             OLD.id
             USING ERRCODE = 'check_violation';
     END IF;
