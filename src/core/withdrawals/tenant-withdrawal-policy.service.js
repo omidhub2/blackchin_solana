@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 
 export function solToLamports(amountSol) {
-  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(amountSol)) {
+  if (typeof amountSol !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,9})?$/.test(amountSol)) {
     throw new TypeError('amountSol must be a decimal string with at most 9 decimal places');
   }
   const [whole, fraction = ''] = amountSol.split('.');
@@ -100,7 +100,7 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       if (!updatedBy || updatedBy.length > 128) throw new TypeError('updatedBy is required');
       const amountFields = ['maxSingleLamports', 'maxDailyLamports', 'maxWeeklyLamports'];
       for (const field of amountFields) {
-        if (typeof input[field] !== 'string' || !/^[1-9]\\d{0,29}$/.test(input[field])) {
+        if (typeof input[field] !== 'string' || !/^[1-9]\d{0,29}$/.test(input[field])) {
           throw new TypeError(`${field} must be a positive integer lamport string`);
         }
       }
