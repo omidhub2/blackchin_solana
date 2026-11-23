@@ -54,9 +54,10 @@ fn hmac_sha512(key: &[u8], data: &[u8]) -> [u8; 64] {
     let mut mac = HmacSha512::new_from_slice(key)
         .expect("HMAC accepts keys of any length");
     mac.update(data);
-    let result = mac.finalize().into_bytes();
+    let mut result = mac.finalize().into_bytes();
     let mut output = [0u8; 64];
     output.copy_from_slice(&result);
+    result.as_mut_slice().zeroize();
     output
 }
 
@@ -103,7 +104,7 @@ fn derive_account_node(seed: &[u8], account_index: u32) -> Slip10Node {
 /// The expected public key is checked before signing. Private material remains
 /// in this process and is never returned to the caller.
 pub fn sign_solana_message(
-    mnemonic_phrase: &str,
+    mnemonic_phrase: &mut [u8],
     account_index: u32,
     expected_public_key: &[u8],
     message: &[u8],
@@ -115,9 +116,13 @@ pub fn sign_solana_message(
         return Err(SignerCoreError::InvalidExpectedPublicKey);
     }
 
-    let mnemonic = Mnemonic::parse(mnemonic_phrase)
-        .map_err(|_| SignerCoreError::InvalidMnemonic)?;
+    let parsed_mnemonic = std::str::from_utf8(mnemonic_phrase)
+        .ok()
+        .and_then(|phrase| Mnemonic::parse(phrase).ok());
+    mnemonic_phrase.zeroize();
+    let mnemonic = parsed_mnemonic.ok_or(SignerCoreError::InvalidMnemonic)?;
     let mut seed = mnemonic.to_seed("");
+    drop(mnemonic);
     let node = derive_account_node(&seed, account_index);
     seed.zeroize();
 
@@ -163,12 +168,14 @@ mod tests {
         let public_key = signing_key.verifying_key().to_bytes();
         let message = b"blackchin remote signer test message";
 
-        let signature = sign_solana_message(MNEMONIC, 0, &public_key, message).unwrap();
+        let mut phrase = MNEMONIC.as_bytes().to_vec();
+        let signature = sign_solana_message(&mut phrase, 0, &public_key, message).unwrap();
+        assert!(phrase.iter().all(|byte| *byte == 0));
         let verifying_key = VerifyingKey::from_bytes(&public_key).unwrap();
         verifying_key.verify(message, &ed25519_dalek::Signature::from_bytes(&signature)).unwrap();
 
         assert_eq!(
-            sign_solana_message(MNEMONIC, 0, &[0u8; 32], message),
+            sign_solana_message(&mut MNEMONIC.as_bytes().to_vec(), 0, &[0u8; 32], message),
             Err(SignerCoreError::PublicKeyMismatch)
         );
         seed.zeroize();
@@ -177,15 +184,15 @@ mod tests {
     #[test]
     fn rejects_invalid_mnemonics_and_account_indexes() {
         assert_eq!(
-            sign_solana_message("not a mnemonic", 0, &[0u8; 32], b"x"),
+            sign_solana_message(&mut b"not a mnemonic".to_vec(), 0, &[0u8; 32], b"x"),
             Err(SignerCoreError::InvalidMnemonic)
         );
         assert_eq!(
-            sign_solana_message(MNEMONIC, u32::MAX, &[0u8; 32], b"x"),
+            sign_solana_message(&mut MNEMONIC.as_bytes().to_vec(), u32::MAX, &[0u8; 32], b"x"),
             Err(SignerCoreError::InvalidAccountIndex)
         );
         assert_eq!(
-            sign_solana_message(MNEMONIC, 0, &[0u8; 31], b"x"),
+            sign_solana_message(&mut MNEMONIC.as_bytes().to_vec(), 0, &[0u8; 31], b"x"),
             Err(SignerCoreError::InvalidExpectedPublicKey)
         );
     }
