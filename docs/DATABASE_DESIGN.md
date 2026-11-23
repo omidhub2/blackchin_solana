@@ -84,7 +84,8 @@ intentionally processes addresses across tenant boundaries; the role itself
 has narrowly scoped grants. It can read public wallet addresses, tenant
 attribution and lifecycle metadata, write verified blockchain transaction
 records, advance scanner/reconciliation cursors, append reconciliation
-evidence, and emit deposit webhook/operational events.
+evidence, and append deposit webhook/operational events using an id/event-id-only
+return projection. It cannot SELECT event payloads or read the delivery queues.
 
 The worker role is not granted encrypted HD mnemonic, IV or authentication-tag
 columns; tenant credentials; idempotency reservations; dashboard sessions;
