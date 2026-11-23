@@ -9,6 +9,35 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 const { connectToPostgres, disconnectPostgres, pool } =
   await import('../PostgreSQL/walletStorage.js');
 
+const tenantDatabaseUrl = process.env.TENANT_DATABASE_URL || null;
+let tenantPool = null;
+if (tenantDatabaseUrl) {
+  let tenantUrl;
+  try {
+    tenantUrl = new URL(tenantDatabaseUrl);
+  } catch (error) {
+    throw new Error('TENANT_DATABASE_URL is not a valid URL', { cause: error });
+  }
+  if (!['postgres:', 'postgresql:'].includes(tenantUrl.protocol) ||
+      !tenantUrl.hostname || !tenantUrl.username || !tenantUrl.pathname || tenantUrl.pathname === '/') {
+    throw new Error('TENANT_DATABASE_URL must include a PostgreSQL host, username and database name');
+  }
+  const tenantHost = tenantUrl.hostname.replace(/^\\[|\\]$/g, '');
+  if (!['localhost', '127.0.0.1', '::1'].includes(tenantHost) &&
+      tenantUrl.searchParams.get('sslmode') !== 'verify-full') {
+    throw new Error('Remote TENANT_DATABASE_URL must explicitly use sslmode=verify-full');
+  }
+  const pgModule = await import('pg');
+  tenantPool = new pgModule.default.Pool({
+    connectionString: tenantDatabaseUrl,
+    max: 10,
+    min: 0,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 30_000,
+    application_name: 'blackchin-tenant-api'
+  });
+}
+
 const host = process.env.API_HOST || '127.0.0.1';
 const port = Number(process.env.API_PORT || 3000);
 
@@ -69,6 +98,7 @@ async function shutdown(signal) {
     if (reconciliationWorker) await reconciliationWorker.stop();
     if (worker) await worker.stop();
     if (server) await server.close();
+    if (tenantPool) await tenantPool.end();
     await disconnectPostgres();
     process.exitCode = 0;
   } catch (error) {
@@ -79,6 +109,22 @@ async function shutdown(signal) {
 
 try {
   await connectToPostgres();
+
+  let tenantContextSigner = null;
+  if (tenantPool) {
+    const tenantContextKey = process.env.TENANT_CONTEXT_HMAC_KEY;
+    if (!tenantContextKey) {
+      throw new Error('TENANT_CONTEXT_HMAC_KEY is required when TENANT_DATABASE_URL is configured');
+    }
+    const {
+      createTenantContextSigner,
+      provisionTenantContextSecret,
+      assertTenantRuntimeRole
+    } = await import('./infrastructure/security/tenant-context.js');
+    await provisionTenantContextSecret(pool, tenantContextKey);
+    await assertTenantRuntimeRole(tenantPool);
+    tenantContextSigner = createTenantContextSigner(tenantContextKey);
+  }
 
   // Fail fast if the schema migrations have not been applied.
   await pool.query('SELECT idempotency_key FROM api_idempotency_keys LIMIT 0');
@@ -102,7 +148,7 @@ try {
 
   // Imported after dotenv so the API key and encryption key are configured.
   const { buildServer } = await import('./api/server.js');
-  const { createServices } = await import('./core/services.js');
+  const { createServices, createTenantRequestServices } = await import('./core/services.js');
   const { createDepositScannerWorker } = await import('./workers/deposit-scanner.worker.js');
   const { acquireReconciliationLock } = await import('./infrastructure/database/deposit-reconciliation.repository.js');
   const { acquireWithdrawalReconciliationLock } = await import('./infrastructure/database/withdrawal-reconciliation.repository.js');
@@ -253,7 +299,13 @@ try {
     }
   });
 
-  server = buildServer({ services, health });
+  server = buildServer({
+    services,
+    health,
+    tenantPool,
+    tenantContextSigner,
+    createTenantServices: (tenantDb) => createTenantRequestServices(services, tenantDb)
+  });
   await server.listen({ host, port });
 
   if (worker) {
