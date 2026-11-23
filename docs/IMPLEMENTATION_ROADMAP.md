@@ -48,6 +48,9 @@ signer is application-layer encrypted key material and is reported as
 - One-time approvals bound to tenant credential, active HD child wallet,
   allowlisted destination, network, SOL asset, exact lamport amount and
   canonical request hash; 15-minute maximum expiry.
+- Partner-issued approvals require a separate `withdrawals:approve` scope plus
+  `withdrawals:submit` and use stable issuer idempotency; dashboard admins can
+  also issue/revoke approvals.
 - Approval consumption/revocation and append-only policy decision audit.
 - Policy edits and emergency freezes invalidate unused approvals.
 - Idempotency reservation precedes policy authorization; completed retries
