@@ -61,7 +61,7 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
       const row = jobs.get(String(params[0]));
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
     }
-    if (text.includes('UPDATE sweep_jobs') && text.includes("status = 'submitted'")) {
+    if (text.includes('UPDATE sweep_jobs') && text.includes("SET status = 'submitted'")) {
       const row = jobs.get(String(params[0]));
       if (!row || row.status !== 'planned' || row.transaction_signature !== null) return { rows: [], rowCount: 0 };
       row.status = 'submitted';
