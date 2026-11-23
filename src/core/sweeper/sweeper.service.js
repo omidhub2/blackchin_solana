@@ -163,10 +163,6 @@ export function createSweeperService({
       }
       const available = balance > fee + retained ? balance - fee - retained : 0n;
       const amount = available >= minimum ? available : 0n;
-      const recentCount = await countRecentSweepJobs(db, tenantId, source.public_key);
-      if (recentCount >= Number(policy.max_sweeps_per_wallet_day)) {
-        throw conflict('Wallet reached its configured daily sweep limit', 'SWEEP_DAILY_LIMIT_REACHED');
-      }
       const slot = await rpc.getSlot(commitment);
       if (!Number.isSafeInteger(slot) || slot < 0) throw new Error('RPC returned an invalid slot');
 
@@ -176,32 +172,56 @@ export function createSweeperService({
         policy.destination_public_key, balance.toString()
       ].join(':');
       const idempotencyKey = crypto.createHash('sha256').update(seed).digest('hex');
-      const result = await insertSweepJob(db, {
-        tenantId, policyId: policy.id, policyVersion: policy.policy_version,
-        network, sourcePublicKey: source.public_key, hdWalletId: source.hd_wallet_id,
-        destinationPublicKey: policy.destination_public_key,
-        sourceBalanceLamports: balance.toString(), amountLamports: amount.toString(),
-        feeLamports: fee.toString(), retainLamports: retained.toString(),
-        observedSlot: slot, idempotencyKey,
-        status: amount === 0n ? 'skipped_dust' : 'planned',
-        metadata: {
-          reason: amount === 0n ? 'balance_below_minimum_after_fee_and_retention' : null,
-          asset: 'native_SOL',
-          commitment
+      const client = await db.connect();
+      let result;
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+          [`blackchin:sweep-plan:${network}:${tenantId ?? 'legacy'}:${source.public_key}`]
+        );
+        const existing = await findSweepJobByIdempotencyKey(client, idempotencyKey);
+        if (existing) {
+          await client.query('COMMIT');
+          return { created: false, job: mapJob(existing) };
         }
-      });
-      if (result.created) {
-        await recordSweepEvent(db, {
-          jobId: result.job.id, tenantId, network,
-          outcome: amount === 0n ? 'skipped_dust' : 'planned',
-          details: {
-            sourceBalanceLamports: balance.toString(),
-            amountLamports: amount.toString(),
-            feeLamports: fee.toString(),
-            retainedLamports: retained.toString(),
-            observedSlot: slot
+        const recentCount = await countRecentSweepJobs(client, tenantId, source.public_key);
+        if (recentCount >= Number(policy.max_sweeps_per_wallet_day)) {
+          throw conflict('Wallet reached its configured daily sweep limit', 'SWEEP_DAILY_LIMIT_REACHED');
+        }
+        result = await insertSweepJob(client, {
+          tenantId, policyId: policy.id, policyVersion: policy.policy_version,
+          network, sourcePublicKey: source.public_key, hdWalletId: source.hd_wallet_id,
+          destinationPublicKey: policy.destination_public_key,
+          sourceBalanceLamports: balance.toString(), amountLamports: amount.toString(),
+          feeLamports: fee.toString(), retainLamports: retained.toString(),
+          observedSlot: slot, idempotencyKey,
+          status: amount === 0n ? 'skipped_dust' : 'planned',
+          metadata: {
+            reason: amount === 0n ? 'balance_below_minimum_after_fee_and_retention' : null,
+            asset: 'native_SOL',
+            commitment
           }
         });
+        if (result.created) {
+          await recordSweepEvent(client, {
+            jobId: result.job.id, tenantId, network,
+            outcome: amount === 0n ? 'skipped_dust' : 'planned',
+            details: {
+              sourceBalanceLamports: balance.toString(),
+              amountLamports: amount.toString(),
+              feeLamports: fee.toString(),
+              retainedLamports: retained.toString(),
+              observedSlot: slot
+            }
+          });
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
       }
       return { created: result.created, job: mapJob(result.job) };
     },
