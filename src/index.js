@@ -275,7 +275,7 @@ try {
 
   // Creating services validates ENCRYPTION_KEY and fails closed before the
   // port is opened.
-  const services = createServices({ pool, webhookWorkerRef });
+  const services = createServices({ pool, webhookWorkerRef, sweeperDb: sweeperPool ?? pool });
   const depositWorkerServices = depositWorkerPool
     ? createServices({ db: depositWorkerPool, pool: depositWorkerPool })
     : null;
