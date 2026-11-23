@@ -136,3 +136,27 @@ latency. It does not print API keys or response bodies.
 
 Passing CI is necessary but does not prove production RPC capacity, provider
 rate limits, failover behavior or mainnet readiness.
+
+## Native SOL sweeper (integrated capability)
+
+The cumulative integration line also includes the isolated native SOL sweeper.
+It is a separate optional worker and is disabled by default.
+
+- Apply migration `0018_sweeper_engine.sql` after observability migration
+  `0017_observability_indexes.sql`.
+- Configure a dedicated `SWEEPER_DATABASE_URL` login granted only
+  `blackchin_sweeper_runtime`.
+- Keep `SWEEPER_ENABLED=false`,
+  `SWEEPER_EXECUTION_ENABLED=false`, and
+  `SWEEPER_MAINNET_EXECUTION_ENABLED=false` until the isolated runtime role,
+  Devnet reconciliation, fee ceiling, retained balance and operator controls
+  have been validated.
+- Planning and execution policy are separate switches. Mainnet execution
+  requires both the global execution switch and the separate Mainnet switch.
+- The Phase 6 health endpoint includes the sweeper database pool and worker
+  state when the sweeper is enabled.
+
+Automatic child-wallet funding is not enabled in this release. Do not enable
+funding or Mainnet execution through environment changes without a reviewed
+policy and an explicit operational sign-off.
+
