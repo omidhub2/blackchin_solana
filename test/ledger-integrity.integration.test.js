@@ -123,6 +123,27 @@ test('PostgreSQL serializes processing withdrawals per source wallet and tenant'
         [tenantId, firstKey]
       ),
       '23514');
+
+    await client.query(
+      `UPDATE api_idempotency_keys
+          SET transaction_signature = 'signature_once',
+              status = 'completed',
+              response_json = '{"ok":true}'::jsonb
+        WHERE tenant_id = $1 AND idempotency_key = $2`,
+      [tenantId, secondKey]
+    );
+    await expectSqlError(client,
+      () => client.query(
+        "UPDATE api_idempotency_keys SET transaction_signature = 'signature_twice' WHERE tenant_id = $1 AND idempotency_key = $2",
+        [tenantId, secondKey]
+      ),
+      '23514');
+    await expectSqlError(client,
+      () => client.query(
+        "UPDATE api_idempotency_keys SET response_json = '{\"ok\":false}'::jsonb WHERE tenant_id = $1 AND idempotency_key = $2",
+        [tenantId, secondKey]
+      ),
+      '23514');
     await client.query('ROLLBACK');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
