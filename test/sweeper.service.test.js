@@ -52,7 +52,7 @@ function harness({ balance = '100000', executionEnabled = true, failLedger = fal
     if (text.includes('SELECT * FROM sweep_jobs WHERE idempotency_key')) {
       return { rows: [], rowCount: 0 };
     }
-    if (text.includes('COUNT(*)::text AS total FROM sweep_jobs')) {
+    if (/COUNT\(\*\)::text AS total[\s\S]*FROM sweep_jobs/.test(text)) {
       return { rows: [{ total: '0' }], rowCount: 1 };
     }
     if (text.includes('pg_advisory_xact_lock')) return { rows: [], rowCount: 1 };
