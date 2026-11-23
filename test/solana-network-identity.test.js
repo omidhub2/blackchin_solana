@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertSolanaNetworkIdentity } from '../config/connection.js';
+import { assertSolanaNetworkIdentity, solanaNetwork } from '../config/connection.js';
 
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 
@@ -10,7 +10,7 @@ test('Solana network identity accepts the expected genesis hash', async () => {
     rpcConnection: { async getGenesisHash() { return DEVNET_GENESIS; } }
   });
   assert.equal(result.genesisHash, DEVNET_GENESIS);
-  assert.equal(result.network, 'devnet');
+  assert.equal(result.network, solanaNetwork);
 });
 
 test('Solana network identity fails closed when the RPC points to another cluster', async () => {
