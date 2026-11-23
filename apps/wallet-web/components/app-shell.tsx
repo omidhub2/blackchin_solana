@@ -144,7 +144,7 @@ function Topbar({ onOpenMenu, user, onLogout }: {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#27292e]">
+    <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#1f2125]">
       <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-6">
         <div className="flex items-center gap-3">
           <button type="button" onClick={onOpenMenu} className="btn-ghost !p-2 lg:hidden" aria-label="Menu">
@@ -260,14 +260,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <RealtimeProvider>
       <div className="min-h-screen">
-        <aside className="fixed inset-y-0 start-0 z-40 hidden w-[264px] border-e border-white/[0.06] bg-[#27292e] px-3 lg:block">
+        <aside className="fixed inset-y-0 start-0 z-40 hidden w-[264px] border-e border-white/[0.06] bg-[#1f2125] px-3 lg:block">
           <SidebarContent />
         </aside>
 
         {mobileOpen ? (
           <div className="fixed inset-0 z-50 lg:hidden">
             <button type="button" aria-label="Close menu" className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
-            <aside className="absolute inset-y-0 start-0 w-[280px] border-e border-white/[0.06] bg-[#27292e] px-3">
+            <aside className="absolute inset-y-0 start-0 w-[280px] border-e border-white/[0.06] bg-[#1f2125] px-3">
               <div className="flex justify-end py-3">
                 <button type="button" className="btn-ghost !p-2" onClick={() => setMobileOpen(false)} aria-label="Close">
                   <X size={18} />
