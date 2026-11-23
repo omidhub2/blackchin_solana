@@ -179,7 +179,7 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
       const updatedBy = String(input.updatedBy ?? '').trim();
       if (!updatedBy || updatedBy.length > 128) throw new TypeError('updatedBy is required');
       for (const field of ['maxSingleLamports', 'maxDailyLamports', 'maxWeeklyLamports']) {
-        if (typeof input[field] !== 'string' || !/^[1-9]\\d{0,29}$/.test(input[field])) {
+        if (typeof input[field] !== 'string' || !/^[1-9]\d{0,29}$/.test(input[field])) {
           throw new TypeError(`${field} must be a positive integer lamport string`);
         }
       }
