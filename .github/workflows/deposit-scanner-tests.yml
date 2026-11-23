@@ -8,6 +8,7 @@ on:
       - "hardening/phase1-ci-test-foundation"
       - "security/phase2-signed-tenant-rls"
       - "security/phase3-ledger-atomicity"
+      - "security/phase4-worker-reconciliation"
   pull_request:
     branches:
       - main
