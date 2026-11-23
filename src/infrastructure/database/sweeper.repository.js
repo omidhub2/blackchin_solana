@@ -188,3 +188,11 @@ export async function countRecentSweepJobs(db, tenantId, sourcePublicKey) {
   return Number(result.rows[0]?.total ?? 0);
 }
 
+export async function findSweepJobByIdempotencyKey(db, idempotencyKey) {
+  const result = await db.query(
+    'SELECT * FROM sweep_jobs WHERE idempotency_key = $1 LIMIT 1',
+    [idempotencyKey]
+  );
+  return result.rows[0] ?? null;
+}
+
