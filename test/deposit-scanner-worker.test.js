@@ -205,3 +205,99 @@ test('worker connection failures are counted and do not run the scanner', async 
   assert.equal(worker.stats.consecutiveFailures, 1);
   assert.equal(worker.hasLock, false);
 });
+
+
+test('two independent worker instances cannot scan the same network scope concurrently', async () => {
+  let lockHeld = false;
+  let scans = 0;
+  let releaseFirstScan;
+  const gate = new Promise((resolve) => { releaseFirstScan = resolve; });
+
+  const pool = {
+    async connect() {
+      return {
+        async query() { return { rows: [{ '?column?': 1 }] }; },
+        release() {}
+      };
+    }
+  };
+  const cursors = {
+    async acquireScannerLock() {
+      if (lockHeld) return null;
+      lockHeld = true;
+      return {
+        async release() {
+          lockHeld = false;
+        }
+      };
+    }
+  };
+  const scanner = {
+    metrics: {},
+    async scan() {
+      scans += 1;
+      await gate;
+      return { signatures: 1, recorded: 1, duplicates: 0, failed: 0 };
+    }
+  };
+  const options = { scanner, cursors, pool, network: 'devnet', scope: 'all' };
+  const first = createDepositScannerWorker(options);
+  const second = createDepositScannerWorker(options);
+
+  const firstRun = first.runOnce();
+  await new Promise((resolve) => setImmediate(resolve));
+  const secondResult = await second.runOnce();
+
+  assert.deepEqual(secondResult, { skipped: 'lock_not_acquired' });
+  assert.equal(scans, 1);
+  assert.equal(first.hasLock, true);
+  assert.equal(second.hasLock, false);
+
+  releaseFirstScan();
+  const result = await firstRun;
+  assert.equal(result.recorded, 1);
+  assert.equal(lockHeld, false);
+  assert.equal(first.hasLock, false);
+});
+
+test('stop waits for an in-flight scan before releasing its advisory lock', async () => {
+  let finishScan;
+  let released = 0;
+  const gate = new Promise((resolve) => { finishScan = resolve; });
+  const worker = createDepositScannerWorker({
+    scanner: {
+      metrics: {},
+      async scan() {
+        await gate;
+        return { signatures: 1, recorded: 1, duplicates: 0, failed: 0 };
+      }
+    },
+    cursors: {
+      async acquireScannerLock() {
+        return { async release() { released += 1; } };
+      }
+    },
+    pool: {
+      async connect() {
+        return {
+          async query() { return { rows: [{ '?column?': 1 }] }; },
+          release() {}
+        };
+      }
+    },
+    network: 'devnet',
+    scope: 'withdrawal-reconciliation'
+  });
+
+  await worker.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopping = worker.stop();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(released, 0, 'lock must remain held until the scan has finished');
+
+  finishScan();
+  await stopping;
+  assert.equal(released, 1);
+  assert.equal(worker.state, 'stopped');
+  assert.equal(worker.hasLock, false);
+});
