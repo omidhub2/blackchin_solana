@@ -175,6 +175,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0014'));
   assert.ok(versions.includes('0015'));
   assert.ok(versions.includes('0016'));
+  assert.ok(versions.includes('0017'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -408,4 +409,29 @@ test('0016 grants deposit workers only public wallet metadata and scanner/reconc
   assert.doesNotMatch(sql, /GRANT SELECT, INSERT\s+ON public\.webhook_outbox/i);
   assert.doesNotMatch(sql, /mnemonic_encrypted|mnemonic_iv|mnemonic_auth_tag/i);
   assert.doesNotMatch(sql, /GRANT .* ON public\.(tenants|tenant_api_credentials|api_idempotency_keys|hot_wallets)/i);
+});
+
+
+test('0017 adds isolated, fail-closed native SOL sweeper policies, jobs and runtime grants', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0017_sweeper_engine.sql'),
+    'utf8'
+  );
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_policies/i);
+  assert.match(sql, /execution_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.match(sql, /funding_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_jobs/i);
+  assert.match(sql, /transaction_signature VARCHAR\(100\)/i);
+  assert.match(sql, /idempotency_key VARCHAR\(128\) NOT NULL UNIQUE/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_events/i);
+  assert.match(sql, /BEFORE UPDATE OR DELETE ON sweep_events/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweeper_worker_cursors/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS sweep_funding_daily_usage/i);
+  assert.match(sql, /CREATE ROLE blackchin_sweeper_runtime/i);
+  assert.match(sql, /GRANT SELECT \([\s\S]*mnemonic_encrypted/i);
+  assert.match(sql, /GRANT SELECT, INSERT\s+ON public\.sweep_events, public\.blockchain_transactions/i);
+  assert.match(sql, /direction IN \('deposit', 'withdrawal', 'sweep'\)/i);
+  assert.doesNotMatch(sql, /GRANT .* ON public\.wallets/i);
+  assert.doesNotMatch(sql, /GRANT .* ON public\.tenant_api_credentials/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
