@@ -14,6 +14,8 @@ export function createHealthService({
   reconciliationEnabled = false,
   withdrawalReconciliationWorker = null,
   withdrawalReconciliationEnabled = false,
+  sweeperWorker = null,
+  sweeperEnabled = false,
   network,
   scope,
   queueDepth = null,
@@ -39,7 +41,8 @@ export function createHealthService({
         database: 'unknown',
         scanner: workerEnabled ? 'unknown' : 'disabled',
         reconciliation: reconciliationEnabled ? 'unknown' : 'disabled',
-        withdrawalReconciliation: withdrawalReconciliationEnabled ? 'unknown' : 'disabled'
+        withdrawalReconciliation: withdrawalReconciliationEnabled ? 'unknown' : 'disabled',
+        sweeper: sweeperEnabled ? 'unknown' : 'disabled'
       };
       let ready = true;
 
@@ -82,6 +85,24 @@ export function createHealthService({
             withdrawalHealth.state !== 'running' ||
             withdrawalHealth.stale === true ||
             withdrawalHealth.hasLock !== true
+          ) {
+            ready = false;
+          }
+        }
+      }
+
+      if (sweeperEnabled) {
+        if (!sweeperWorker) {
+          checks.sweeper = 'not_started';
+          ready = false;
+        } else {
+          const sweeperHealth = sweeperWorker.health();
+          checks.sweeper = sweeperHealth.state;
+          checks.sweeperStale = sweeperHealth.stale;
+          if (
+            sweeperHealth.state !== 'running' ||
+            sweeperHealth.stale === true ||
+            sweeperHealth.hasLock !== true
           ) {
             ready = false;
           }
