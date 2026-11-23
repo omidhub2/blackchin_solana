@@ -63,6 +63,339 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
   }
 
   return Object.freeze({
+    async getPolicy(tenantId) {
+      tenantId = assertId(tenantId, 'tenantId');
+      const result = await db.query(
+        `SELECT tenant_id, enabled, emergency_frozen, freeze_reason,
+                max_single_lamports, max_daily_lamports, max_weekly_lamports,
+                max_daily_count, max_weekly_count, policy_version,
+                updated_by, created_at, updated_at
+           FROM tenant_withdrawal_policies
+          WHERE tenant_id = $1
+          LIMIT 1`,
+        [tenantId]
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        tenantId: String(row.tenant_id),
+        enabled: row.enabled,
+        emergencyFrozen: row.emergency_frozen,
+        freezeReason: row.freeze_reason,
+        maxSingleLamports: String(row.max_single_lamports),
+        maxDailyLamports: String(row.max_daily_lamports),
+        maxWeeklyLamports: String(row.max_weekly_lamports),
+        maxDailyCount: Number(row.max_daily_count),
+        maxWeeklyCount: Number(row.max_weekly_count),
+        policyVersion: String(row.policy_version),
+        updatedBy: row.updated_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      };
+    },
+
+    async configurePolicy(input = {}) {
+      const tenantId = assertId(input.tenantId, 'tenantId');
+      const updatedBy = String(input.updatedBy ?? '').trim();
+      if (!updatedBy || updatedBy.length > 128) throw new TypeError('updatedBy is required');
+      const amountFields = ['maxSingleLamports', 'maxDailyLamports', 'maxWeeklyLamports'];
+      for (const field of amountFields) {
+        if (typeof input[field] !== 'string' || !/^[1-9]\\d{0,29}$/.test(input[field])) {
+          throw new TypeError(`${field} must be a positive integer lamport string`);
+        }
+      }
+      for (const field of ['maxDailyCount', 'maxWeeklyCount']) {
+        if (!Number.isSafeInteger(input[field]) || input[field] < 1 || input[field] > 1_000_000) {
+          throw new TypeError(`${field} must be a positive safe integer`);
+        }
+      }
+      if (typeof input.enabled !== 'boolean') throw new TypeError('enabled must be boolean');
+
+      const result = await db.query(
+        `INSERT INTO tenant_withdrawal_policies (
+           tenant_id, enabled, emergency_frozen, freeze_reason,
+           max_single_lamports, max_daily_lamports, max_weekly_lamports,
+           max_daily_count, max_weekly_count, policy_version, updated_by
+         )
+         SELECT id, $2, TRUE, 'Policy changed; explicit unfreeze required',
+                $3::numeric, $4::numeric, $5::numeric, $6, $7, 1, $8
+           FROM tenants WHERE id = $1
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           enabled = EXCLUDED.enabled,
+           emergency_frozen = TRUE,
+           freeze_reason = 'Policy changed; explicit unfreeze required',
+           max_single_lamports = EXCLUDED.max_single_lamports,
+           max_daily_lamports = EXCLUDED.max_daily_lamports,
+           max_weekly_lamports = EXCLUDED.max_weekly_lamports,
+           max_daily_count = EXCLUDED.max_daily_count,
+           max_weekly_count = EXCLUDED.max_weekly_count,
+           policy_version = tenant_withdrawal_policies.policy_version + 1,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()
+         RETURNING tenant_id, enabled, emergency_frozen, freeze_reason,
+                   max_single_lamports, max_daily_lamports, max_weekly_lamports,
+                   max_daily_count, max_weekly_count, policy_version,
+                   updated_by, created_at, updated_at`,
+        [tenantId, input.enabled, input.maxSingleLamports, input.maxDailyLamports,
+          input.maxWeeklyLamports, input.maxDailyCount, input.maxWeeklyCount, updatedBy]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Tenant was not found');
+        error.statusCode = 404;
+        error.code = 'TENANT_NOT_FOUND';
+        throw error;
+      }
+      return {
+        tenantId: String(result.rows[0].tenant_id),
+        enabled: result.rows[0].enabled,
+        emergencyFrozen: result.rows[0].emergency_frozen,
+        freezeReason: result.rows[0].freeze_reason,
+        maxSingleLamports: String(result.rows[0].max_single_lamports),
+        maxDailyLamports: String(result.rows[0].max_daily_lamports),
+        maxWeeklyLamports: String(result.rows[0].max_weekly_lamports),
+        maxDailyCount: Number(result.rows[0].max_daily_count),
+        maxWeeklyCount: Number(result.rows[0].max_weekly_count),
+        policyVersion: String(result.rows[0].policy_version),
+        updatedBy: result.rows[0].updated_by,
+        createdAt: result.rows[0].created_at,
+        updatedAt: result.rows[0].updated_at
+      };
+    },
+
+    async freeze({ tenantId, reason, updatedBy } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      if (typeof reason !== 'string' || !reason.trim() || reason.trim().length > 500) {
+        throw new TypeError('A freeze reason of 1 to 500 characters is required');
+      }
+      if (typeof updatedBy !== 'string' || !updatedBy.trim() || updatedBy.length > 128) {
+        throw new TypeError('updatedBy is required');
+      }
+      const result = await db.query(
+        `UPDATE tenant_withdrawal_policies
+            SET emergency_frozen = TRUE, freeze_reason = $2,
+                policy_version = policy_version + 1, updated_by = $3, updated_at = NOW()
+          WHERE tenant_id = $1
+          RETURNING tenant_id, enabled, emergency_frozen, freeze_reason, policy_version`,
+        [tenantId, reason.trim(), updatedBy]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Tenant withdrawal policy was not found');
+        error.statusCode = 404;
+        error.code = 'WITHDRAWAL_POLICY_NOT_FOUND';
+        throw error;
+      }
+      return {
+        tenantId: String(result.rows[0].tenant_id),
+        enabled: result.rows[0].enabled,
+        emergencyFrozen: result.rows[0].emergency_frozen,
+        freezeReason: result.rows[0].freeze_reason,
+        policyVersion: String(result.rows[0].policy_version)
+      };
+    },
+
+    async unfreeze({ tenantId, updatedBy } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      if (typeof updatedBy !== 'string' || !updatedBy.trim() || updatedBy.length > 128) {
+        throw new TypeError('updatedBy is required');
+      }
+      const result = await db.query(
+        `UPDATE tenant_withdrawal_policies
+            SET emergency_frozen = FALSE, freeze_reason = NULL,
+                policy_version = policy_version + 1, updated_by = $2, updated_at = NOW()
+          WHERE tenant_id = $1 AND enabled = TRUE
+            AND max_single_lamports > 0 AND max_daily_lamports > 0
+            AND max_weekly_lamports > 0 AND max_daily_count > 0
+            AND max_weekly_count > 0
+          RETURNING tenant_id, enabled, emergency_frozen, freeze_reason, policy_version`,
+        [tenantId, updatedBy]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Policy must be configured and enabled before it can be unfrozen');
+        error.statusCode = 409;
+        error.code = 'WITHDRAWAL_POLICY_NOT_READY';
+        throw error;
+      }
+      return {
+        tenantId: String(result.rows[0].tenant_id),
+        enabled: result.rows[0].enabled,
+        emergencyFrozen: result.rows[0].emergency_frozen,
+        freezeReason: result.rows[0].freeze_reason,
+        policyVersion: String(result.rows[0].policy_version)
+      };
+    },
+
+    async listDestinations(tenantId) {
+      tenantId = assertId(tenantId, 'tenantId');
+      const result = await db.query(
+        `SELECT id, tenant_id, network, asset, destination_public_key, status,
+                label, created_by, approved_by, approved_at, revoked_at, created_at
+           FROM tenant_withdrawal_destinations
+          WHERE tenant_id = $1
+          ORDER BY created_at DESC, id DESC`,
+        [tenantId]
+      );
+      return result.rows.map((row) => ({
+        id: String(row.id), tenantId: String(row.tenant_id), network: row.network,
+        asset: row.asset, destinationPublicKey: row.destination_public_key,
+        status: row.status, label: row.label, createdBy: row.created_by,
+        approvedBy: row.approved_by, approvedAt: row.approved_at,
+        revokedAt: row.revoked_at, createdAt: row.created_at
+      }));
+    },
+
+    async addDestination({ tenantId, network, destinationPublicKey, label = null, createdBy } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      if (!['devnet', 'testnet', 'mainnet-beta'].includes(network)) throw new TypeError('Unsupported Solana network');
+      if (typeof destinationPublicKey !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(destinationPublicKey)) {
+        throw new TypeError('destinationPublicKey is invalid');
+      }
+      if (label !== null && (typeof label !== 'string' || label.length > 100)) throw new TypeError('label is invalid');
+      if (typeof createdBy !== 'string' || !createdBy.trim() || createdBy.length > 128) throw new TypeError('createdBy is required');
+      const result = await db.query(
+        `INSERT INTO tenant_withdrawal_destinations
+           (tenant_id, network, asset, destination_public_key, status, label, created_by)
+         SELECT id, $2, 'SOL', $3, 'pending', $4, $5
+           FROM tenants WHERE id = $1 AND status = 'active'
+         RETURNING id, tenant_id, network, asset, destination_public_key, status,
+                   label, created_by, approved_by, approved_at, revoked_at, created_at`,
+        [tenantId, network, destinationPublicKey, label, createdBy]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Active tenant was not found');
+        error.statusCode = 404;
+        error.code = 'TENANT_NOT_FOUND_OR_INACTIVE';
+        throw error;
+      }
+      const row = result.rows[0];
+      return {
+        id: String(row.id), tenantId: String(row.tenant_id), network: row.network,
+        asset: row.asset, destinationPublicKey: row.destination_public_key,
+        status: row.status, label: row.label, createdBy: row.created_by,
+        approvedBy: row.approved_by, approvedAt: row.approved_at,
+        revokedAt: row.revoked_at, createdAt: row.created_at
+      };
+    },
+
+    async activateDestination({ tenantId, destinationId, approvedBy } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      const id = assertId(destinationId, 'destinationId');
+      if (typeof approvedBy !== 'string' || !approvedBy.trim() || approvedBy.length > 128) {
+        throw new TypeError('approvedBy is required');
+      }
+      const result = await db.query(
+        `UPDATE tenant_withdrawal_destinations
+            SET status = 'active', approved_by = $3, approved_at = NOW()
+          WHERE tenant_id = $1 AND id = $2 AND status = 'pending'
+            AND created_by IS DISTINCT FROM $3
+          RETURNING id, tenant_id, network, asset, destination_public_key, status,
+                    label, created_by, approved_by, approved_at, revoked_at, created_at`,
+        [tenantId, id, approvedBy]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Destination was not pending, was not found, or requires a second approver');
+        error.statusCode = 409;
+        error.code = 'DESTINATION_APPROVAL_REQUIRED';
+        throw error;
+      }
+      const row = result.rows[0];
+      return {
+        id: String(row.id), tenantId: String(row.tenant_id), network: row.network,
+        asset: row.asset, destinationPublicKey: row.destination_public_key,
+        status: row.status, label: row.label, createdBy: row.created_by,
+        approvedBy: row.approved_by, approvedAt: row.approved_at,
+        revokedAt: row.revoked_at, createdAt: row.created_at
+      };
+    },
+
+    async revokeDestination({ tenantId, destinationId } = {}) {
+      tenantId = assertId(tenantId, 'tenantId');
+      const id = assertId(destinationId, 'destinationId');
+      const result = await db.query(
+        `UPDATE tenant_withdrawal_destinations
+            SET status = 'revoked', revoked_at = NOW()
+          WHERE tenant_id = $1 AND id = $2 AND status IN ('pending', 'active')
+          RETURNING id, tenant_id, network, asset, destination_public_key, status,
+                    label, created_by, approved_by, approved_at, revoked_at, created_at`,
+        [tenantId, id]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Destination was not found or already revoked');
+        error.statusCode = 404;
+        error.code = 'DESTINATION_NOT_FOUND';
+        throw error;
+      }
+      const row = result.rows[0];
+      return {
+        id: String(row.id), tenantId: String(row.tenant_id), network: row.network,
+        asset: row.asset, destinationPublicKey: row.destination_public_key,
+        status: row.status, label: row.label, createdBy: row.created_by,
+        approvedBy: row.approved_by, approvedAt: row.approved_at,
+        revokedAt: row.revoked_at, createdAt: row.created_at
+      };
+    },
+
+    async issueApproval(input = {}) {
+      const tenantId = assertId(input.tenantId, 'tenantId');
+      const credentialId = assertId(input.credentialId, 'credentialId');
+      const amountLamports = assertLamports(input.amountLamports);
+      const requestHash = assertHash(input.requestHash);
+      const issuer = String(input.issuer ?? '').trim();
+      const issuerEventId = crypto.randomUUID();
+      if (!issuer || issuer.length > 128) throw new TypeError('issuer is required');
+      if (typeof input.approvalReference !== 'string' ||
+          !/^[A-Za-z0-9._:-]{8,128}$/.test(input.approvalReference)) {
+        throw new TypeError('approvalReference is invalid');
+      }
+      if (!['devnet', 'testnet', 'mainnet-beta'].includes(input.network)) throw new TypeError('Unsupported Solana network');
+      if (typeof input.walletPublicKey !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.walletPublicKey)) {
+        throw new TypeError('walletPublicKey is invalid');
+      }
+      if (typeof input.destinationPublicKey !== 'string' ||
+          !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.destinationPublicKey)) {
+        throw new TypeError('destinationPublicKey is invalid');
+      }
+      const expiresAt = input.expiresAt;
+      if (!(expiresAt instanceof Date) || Number.isNaN(expiresAt.getTime()) ||
+          expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 15 * 60_000) {
+        throw new TypeError('Approval expiry must be within the next 15 minutes');
+      }
+      const result = await db.query(
+        `INSERT INTO tenant_withdrawal_approvals (
+           tenant_id, credential_id, approval_reference, request_hash,
+           wallet_public_key, destination_public_key, network, asset,
+           amount_lamports, status, issuer, issuer_event_id, expires_at
+         )
+         SELECT c.tenant_id, c.id, $3, $4, $5, $6, $7, 'SOL',
+                $8::numeric, 'approved', $9, $10, $11
+           FROM tenant_api_credentials c
+           INNER JOIN tenants t ON t.id = c.tenant_id
+          WHERE c.tenant_id = $1 AND c.id = $2
+            AND c.status = 'active' AND t.status = 'active'
+            AND c.scopes @> ARRAY['withdrawals:submit']::text[]
+         RETURNING tenant_id, credential_id, approval_reference, request_hash,
+                   wallet_public_key, destination_public_key, network, asset,
+                   amount_lamports, status, issuer, issuer_event_id, expires_at, approved_at`,
+        [tenantId, credentialId, input.approvalReference, requestHash,
+          input.walletPublicKey, input.destinationPublicKey, input.network,
+          amountLamports, issuer, issuerEventId, expiresAt]
+      );
+      if (result.rowCount !== 1) {
+        const error = new Error('Active tenant credential with withdrawals:submit scope was not found');
+        error.statusCode = 404;
+        error.code = 'WITHDRAWAL_CREDENTIAL_NOT_FOUND';
+        throw error;
+      }
+      const row = result.rows[0];
+      return {
+        tenantId: String(row.tenant_id), credentialId: String(row.credential_id),
+        approvalReference: row.approval_reference, requestHash: String(row.request_hash).trim(),
+        walletPublicKey: row.wallet_public_key, destinationPublicKey: row.destination_public_key,
+        network: row.network, asset: row.asset, amountLamports: String(row.amount_lamports),
+        status: row.status, issuer: row.issuer, issuerEventId: row.issuer_event_id,
+        expiresAt: row.expires_at, approvedAt: row.approved_at
+      };
+    },
+
     async authorize(input = {}) {
       const tenantId = assertId(input.tenantId, 'tenantId');
       const credentialId = assertId(input.credentialId, 'credentialId');
