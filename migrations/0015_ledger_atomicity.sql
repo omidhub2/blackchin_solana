@@ -5,8 +5,25 @@
 -- A signed/ambiguous withdrawal remains 'processing' until reconciliation,
 -- intentionally preventing a second send from that wallet.
 
+-- Hold the reservation table against concurrent inserts while checking legacy
+-- state and building the unique indexes. The migration runner wraps this file
+-- in one transaction, so the lock remains held through index creation.
+LOCK TABLE public.api_idempotency_keys IN SHARE ROW EXCLUSIVE MODE;
+
 DO $preflight$
 BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM public.api_idempotency_keys
+         WHERE operation = 'withdrawal'
+           AND status = 'processing'
+           AND wallet_public_key IS NULL
+    ) THEN
+        RAISE EXCEPTION
+            'Cannot install withdrawal serialization: processing withdrawal reservations have no source wallet; reconcile or repair them first'
+            USING ERRCODE = 'check_violation';
+    END IF;
+
     IF EXISTS (
         SELECT 1
           FROM public.api_idempotency_keys
