@@ -389,9 +389,175 @@ export function createSweeperService({
       }
     },
 
+    async reconcileSubmittedSweeps({ limit = 100 } = {}) {
+      if (typeof rpc.getSignatureStatuses !== 'function' ||
+          typeof rpc.getParsedTransaction !== 'function') {
+        return { checked: 0, completed: 0, failed: 0, underReview: 0, pending: 0 };
+      }
+      const jobs = await listSubmittedSweepJobs(db, network, { limit });
+      const metrics = { checked: 0, completed: 0, failed: 0, underReview: 0, pending: 0 };
+      for (const job of jobs) {
+        metrics.checked += 1;
+        try {
+          const statusResult = await rpc.getSignatureStatuses([job.transaction_signature]);
+          const status = statusResult?.value?.[0] ?? null;
+          if (!status || status.confirmationStatus !== 'finalized') {
+            metrics.pending += 1;
+            continue;
+          }
+          if (status.err) {
+            const client = await db.connect();
+            try {
+              await client.query('BEGIN');
+              const updated = await client.query(
+                `UPDATE sweep_jobs
+                    SET status = 'failed', error_code = 'SWEEP_CHAIN_FAILURE',
+                        error_message = $3, updated_at = NOW()
+                  WHERE id = $1 AND status = 'submitted' AND transaction_signature = $2
+                  RETURNING id`,
+                [job.id, job.transaction_signature, JSON.stringify(status.err).slice(0, 500)]
+              );
+              if (updated.rowCount === 1) {
+                await recordSweepEvent(client, {
+                  jobId: job.id, tenantId: job.tenant_id, network,
+                  outcome: 'finalized_failure', signature: job.transaction_signature,
+                  details: { transactionError: status.err }
+                });
+              }
+              await client.query('COMMIT');
+            } catch (error) {
+              await client.query('ROLLBACK').catch(() => {});
+              throw error;
+            } finally {
+              client.release();
+            }
+            metrics.failed += 1;
+            continue;
+          }
+
+          const parsed = await rpc.getParsedTransaction(job.transaction_signature, 'finalized');
+          const signatures = parsed?.transaction?.signatures;
+          const slotMatches = status.slot === null || status.slot === undefined ||
+            parsed?.slot === null || parsed?.slot === undefined ||
+            Number(status.slot) === Number(parsed.slot);
+          const instructions = [
+            ...(parsed?.transaction?.message?.instructions ?? []),
+            ...(parsed?.meta?.innerInstructions ?? []).flatMap((entry) => entry.instructions ?? [])
+          ];
+          const transfers = instructions
+            .filter((instruction) =>
+              instruction?.program === 'system' &&
+              instruction?.parsed?.type === 'transfer' &&
+              instruction?.parsed?.info &&
+              typeof instruction.parsed.info === 'object'
+            )
+            .map((instruction) => instruction.parsed.info)
+            .filter((info) =>
+              info.source === job.source_public_key &&
+              info.destination === job.destination_public_key &&
+              String(info.lamports) === String(job.amount_raw)
+            );
+
+          if (
+            !parsed || parsed.meta?.err ||
+            !Array.isArray(signatures) || !signatures.includes(job.transaction_signature) ||
+            !slotMatches || transfers.length !== 1
+          ) {
+            await db.query(
+              `UPDATE sweep_jobs
+                  SET status = 'under_review',
+                      error_code = 'SWEEP_FINALIZED_EVIDENCE_MISMATCH',
+                      error_message = 'Finalized transaction evidence does not match the persisted sweep intent',
+                      updated_at = NOW()
+                WHERE id = $1 AND status = 'submitted' AND transaction_signature = $2`,
+              [job.id, job.transaction_signature]
+            );
+            await recordSweepEvent(db, {
+              jobId: job.id, tenantId: job.tenant_id, network,
+              outcome: 'under_review', signature: job.transaction_signature,
+              details: { parsedAvailable: Boolean(parsed), matchingTransferCount: transfers.length }
+            });
+            metrics.underReview += 1;
+            continue;
+          }
+
+          const client = await db.connect();
+          try {
+            await client.query('BEGIN');
+            const existing = await findTransactionBySignature(
+              client, job.transaction_signature, job.source_public_key, 'sweep'
+            );
+            if (existing && (
+              existing.amountLamports !== String(job.amount_raw) ||
+              existing.counterparty !== job.destination_public_key ||
+              existing.network !== network ||
+              existing.idempotencyKey !== job.idempotency_key ||
+              existing.tenantId !== (job.tenant_id === null ? null : String(job.tenant_id))
+            )) {
+              throw new Error('Existing sweep ledger row conflicts with finalized chain evidence');
+            }
+            if (!existing) {
+              const inserted = await insertBlockchainTransaction(client, {
+                signature: job.transaction_signature,
+                direction: 'sweep',
+                walletPublicKey: job.source_public_key,
+                hdWalletId: job.hd_wallet_id,
+                counterparty: job.destination_public_key,
+                amountLamports: String(job.amount_raw),
+                feeLamports: parsed.meta?.fee === undefined ? null : String(parsed.meta.fee),
+                network,
+                commitment: 'finalized',
+                status: 'confirmed',
+                slot: parsed.slot ?? null,
+                idempotencyKey: job.idempotency_key,
+                tenantId: job.tenant_id === null ? null : String(job.tenant_id),
+                metadata: { sweepJobId: String(job.id), assetType: 'sol', reconciled: true }
+              });
+              if (!inserted.created) throw new Error('Sweep ledger identity raced with another writer');
+            }
+            const completed = await client.query(
+              `UPDATE sweep_jobs
+                  SET status = 'completed', error_code = NULL, error_message = NULL,
+                      updated_at = NOW()
+                WHERE id = $1 AND status = 'submitted' AND transaction_signature = $2
+                RETURNING id`,
+              [job.id, job.transaction_signature]
+            );
+            if (completed.rowCount !== 1) throw new Error('Sweep job changed during reconciliation');
+            await recordSweepEvent(client, {
+              jobId: job.id, tenantId: job.tenant_id, network,
+              outcome: 'reconciled_finalized', signature: job.transaction_signature,
+              details: { amountLamports: String(job.amount_raw), slot: parsed.slot ?? null }
+            });
+            await client.query('COMMIT');
+            metrics.completed += 1;
+          } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+          } finally {
+            client.release();
+          }
+        } catch (error) {
+          log('sweep.reconciliation_error', {
+            jobId: String(job.id),
+            signature: job.transaction_signature,
+            code: error.code ?? 'UNKNOWN',
+            message: String(error.message ?? 'unknown error').slice(0, 300)
+          });
+          metrics.pending += 1;
+        }
+      }
+      return metrics;
+    },
+
     async scan({ limit = 5000 } = {}) {
+      const reconciliation = await this.reconcileSubmittedSweeps({ limit: 100 });
       const candidates = await listSweepCandidates(db, network, { limit });
-      const metrics = { candidates: candidates.length, planned: 0, dust: 0, executed: 0, failed: 0 };
+      const metrics = {
+        candidates: candidates.length, planned: 0, dust: 0, executed: 0, failed: 0,
+        reconciled: reconciliation.completed, pending: reconciliation.pending,
+        underReview: reconciliation.underReview
+      };
       for (const candidate of candidates) {
         const tenantId = candidate.tenant_id === null ? null : String(candidate.tenant_id);
         try {
@@ -401,6 +567,9 @@ export function createSweeperService({
           });
           if (planned.job.status === 'skipped_dust') {
             metrics.dust += 1;
+            continue;
+          }
+          if (['submitted', 'under_review', 'completed', 'failed'].includes(planned.job.status)) {
             continue;
           }
           metrics.planned += Number(planned.created);
