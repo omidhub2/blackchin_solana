@@ -233,6 +233,9 @@ test('approval issuance is bound to an active destination, active tenant wallet 
     async query(sql, params) {
       const query = String(sql);
       calls.push({ query, params });
+      if (query.includes('FROM tenant_withdrawal_policies')) {
+        return { rows: [{ enabled: true, emergency_frozen: false }], rowCount: 1 };
+      }
       if (query.includes('FROM tenant_withdrawal_destinations')) {
         return { rows: [{ id: '9' }], rowCount: 1 };
       }
@@ -270,6 +273,6 @@ test('approval issuance is bound to an active destination, active tenant wallet 
 
   assert.equal(approval.tenantId, '42');
   assert.equal(approval.status, 'approved');
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.match(calls[2].query, /c\.scopes @> ARRAY\['withdrawals:submit'\]::text\[\]/);
 });
