@@ -196,3 +196,14 @@ export async function findSweepJobByIdempotencyKey(db, idempotencyKey) {
   return result.rows[0] ?? null;
 }
 
+export async function listSubmittedSweepJobs(db, network, { limit = 100 } = {}) {
+  const result = await db.query(
+    `SELECT * FROM sweep_jobs
+      WHERE network = $1 AND status = 'submitted'
+      ORDER BY updated_at ASC, id ASC
+      LIMIT $2`,
+    [network, limit]
+  );
+  return result.rows;
+}
+
