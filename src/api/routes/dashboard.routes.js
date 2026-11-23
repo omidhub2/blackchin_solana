@@ -26,7 +26,7 @@ import {
   requirePublicKey,
   requireSolAmount
 } from '../validation.js';
-import { badRequest, notFound, mapUniqueViolation } from '../../core/errors.js';
+import { badRequest, notFound, mapUniqueViolation, serviceUnavailable } from '../../core/errors.js';
 import {
   hashTenantWithdrawalRequest,
   solToLamports
@@ -749,6 +749,101 @@ export async function dashboardRoutes(app) {
       payload: { credentialId: credential.id }
     });
     return { credential };
+  });
+
+  // -------------------------------------------------------------------------
+  // Native SOL sweeper — policy, planning and job visibility
+  // -------------------------------------------------------------------------
+
+  function requireSweeper(request) {
+    const sweeper = services(request).sweeper;
+    if (!sweeper) {
+      throw serviceUnavailable('Sweeper service is unavailable', 'SWEEPER_UNAVAILABLE');
+    }
+    return sweeper;
+  }
+
+  app.get('/sweeper/policy', { preHandler: authHook }, async (request) => {
+    const tenantId = parseOptionalTenantId(request.query.tenantId);
+    return { policy: await requireSweeper(request).getPolicy({ tenantId }) };
+  });
+
+  app.put('/sweeper/policy', {
+    preHandler: [authHook, adminGuard, mutationLimiter]
+  }, async (request) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, [
+      'tenantId', 'destinationPublicKey', 'enabled', 'executionEnabled',
+      'fundingEnabled', 'minSolSweepLamports', 'retainLamports',
+      'maxFeeLamports', 'maxSweepsPerWalletDay'
+    ]);
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      throw badRequest('enabled must be boolean', 'INVALID_SWEEP_POLICY');
+    }
+    if (body.executionEnabled !== undefined && typeof body.executionEnabled !== 'boolean') {
+      throw badRequest('executionEnabled must be boolean', 'INVALID_SWEEP_POLICY');
+    }
+    if (body.fundingEnabled !== undefined && typeof body.fundingEnabled !== 'boolean') {
+      throw badRequest('fundingEnabled must be boolean', 'INVALID_SWEEP_POLICY');
+    }
+    for (const field of ['minSolSweepLamports', 'retainLamports', 'maxFeeLamports']) {
+      if (body[field] !== undefined && !/^\d+$/.test(String(body[field]))) {
+        throw badRequest(`${field} must be an unsigned integer string in lamports`, 'INVALID_SWEEP_POLICY');
+      }
+    }
+    const policy = await requireSweeper(request).configurePolicy({
+      tenantId: parseOptionalTenantId(body.tenantId),
+      destinationPublicKey: requireString(body.destinationPublicKey, 'destinationPublicKey', { min: 32, max: 44 }),
+      enabled: body.enabled ?? false,
+      executionEnabled: body.executionEnabled ?? false,
+      fundingEnabled: body.fundingEnabled ?? false,
+      minSolSweepLamports: body.minSolSweepLamports,
+      retainLamports: body.retainLamports,
+      maxFeeLamports: body.maxFeeLamports,
+      maxSweepsPerWalletDay: body.maxSweepsPerWalletDay
+    });
+    await recordOperationalEventSafe(db(), {
+      eventType: 'sweeper.policy_updated',
+      tenantId: policy.tenant_id,
+      network: policy.network,
+      payload: {
+        policyId: String(policy.id),
+        policyVersion: String(policy.policy_version),
+        enabled: policy.enabled,
+        executionEnabled: policy.execution_enabled,
+        fundingEnabled: policy.funding_enabled
+      }
+    });
+    return { policy };
+  });
+
+  app.post('/sweeper/plan', {
+    preHandler: [authHook, operatorGuard, mutationLimiter]
+  }, async (request, reply) => {
+    const body = requireObject(request.body ?? {}, 'body');
+    rejectUnknownKeys(body, ['tenantId', 'sourcePublicKey']);
+    const result = await requireSweeper(request).planSolSweep({
+      tenantId: parseOptionalTenantId(body.tenantId),
+      sourcePublicKey: requireString(body.sourcePublicKey, 'sourcePublicKey', { min: 32, max: 44 })
+    });
+    reply.header('Cache-Control', 'no-store');
+    return reply.code(result.created ? 201 : 200).send(result);
+  });
+
+  app.get('/sweeper/jobs', { preHandler: authHook }, async (request) => ({
+    items: await requireSweeper(request).listJobs({
+      tenantId: parseOptionalTenantId(request.query.tenantId),
+      limit: parseListLimit(request.query.limit, 50, 200),
+      offset: parseListOffset(request.query.offset)
+    })
+  }));
+
+  app.get('/sweeper/jobs/:id', { preHandler: authHook }, async (request) => {
+    const id = requireString(request.params.id, 'id', { max: 19, pattern: /^[1-9]\d*$/ });
+    const tenantId = parseOptionalTenantId(request.query.tenantId);
+    const job = await requireSweeper(request).getJob(id, { tenantId });
+    if (!job) throw notFound('Sweep job was not found', 'SWEEP_JOB_NOT_FOUND');
+    return { job };
   });
 
   // -------------------------------------------------------------------------
