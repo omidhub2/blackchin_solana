@@ -175,6 +175,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0014'));
   assert.ok(versions.includes('0015'));
   assert.ok(versions.includes('0016'));
+  assert.ok(versions.includes('0017'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -408,4 +409,19 @@ test('0016 grants deposit workers only public wallet metadata and scanner/reconc
   assert.doesNotMatch(sql, /GRANT SELECT, INSERT\s+ON public\.webhook_outbox/i);
   assert.doesNotMatch(sql, /mnemonic_encrypted|mnemonic_iv|mnemonic_auth_tag/i);
   assert.doesNotMatch(sql, /GRANT .* ON public\.(tenants|tenant_api_credentials|api_idempotency_keys|hot_wallets)/i);
+});
+
+
+test('0017 adds partial indexes for bounded production observability backlog queries', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0017_observability_indexes.sql'),
+    'utf8'
+  );
+  assert.match(sql, /idx_webhook_outbox_observability_pending/i);
+  assert.match(sql, /idx_api_idempotency_observability_signed_withdrawals/i);
+  assert.match(sql, /idx_blockchain_transactions_observability_under_review/i);
+  assert.match(sql, /idx_deposit_reconciliation_observability_under_review/i);
+  assert.match(sql, /idx_withdrawal_reconciliation_observability_under_review/i);
+  assert.match(sql, /WHERE status = 'under_review'/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
