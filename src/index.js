@@ -62,6 +62,7 @@ const withdrawalReconciliationIntervalMs = Number(process.env.WITHDRAWAL_RECONCI
 const webhookDeliveryEnabled = process.env.WEBHOOK_DELIVERY_ENABLED === 'true';
 const sweeperEnabled = process.env.SWEEPER_ENABLED === 'true';
 const sweeperExecutionEnabled = process.env.SWEEPER_EXECUTION_ENABLED === 'true';
+const sweeperMainnetExecutionEnabled = process.env.SWEEPER_MAINNET_EXECUTION_ENABLED === 'true';
 const sweeperIntervalMs = Number(process.env.SWEEPER_INTERVAL_MS || 60_000);
 const sweeperDatabaseUrl = process.env.SWEEPER_DATABASE_URL || null;
 let sweeperPool = null;
@@ -390,6 +391,7 @@ try {
       network: scannerNetwork,
       commitment: services.deps.commitment,
       executionEnabled: sweeperExecutionEnabled,
+      allowMainnetExecution: sweeperMainnetExecutionEnabled,
       log: (event, meta) => console.log(JSON.stringify({
         time: new Date().toISOString(), event, ...meta
       }))
