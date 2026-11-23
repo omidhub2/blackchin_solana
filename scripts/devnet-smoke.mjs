@@ -34,11 +34,7 @@ const recipient = Keypair.generate();
 
 try {
   const airdropSignature = await requestDevnetAirdrop(sender.publicKey, 1_000_000_000);
-  const airdropBlockhash = await connection.getLatestBlockhash('confirmed');
-  const airdropConfirmation = await connection.confirmTransaction({
-    signature: airdropSignature,
-    ...airdropBlockhash
-  }, 'confirmed');
+  const airdropConfirmation = await connection.confirmTransaction(airdropSignature, 'confirmed');
 
   if (airdropConfirmation.value.err) {
     throw new Error(`Devnet airdrop failed: ${JSON.stringify(airdropConfirmation.value.err)}`);
