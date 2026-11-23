@@ -284,8 +284,11 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
       // The ledger insert and idempotency completion are one commit. If either
       // fails after broadcast, the reservation remains processing and the
       // reconciliation worker is the only path allowed to resolve it.
-      const client = await db.connect();
+      let client;
       try {
+        // Connection acquisition is part of the post-broadcast commit boundary:
+        // it can fail after Solana accepted the transaction.
+        client = await db.connect();
         await client.query('BEGIN');
         let existing = await findTransactionBySignature(
           client, sent.signature, fromPublicKey, 'withdrawal'
@@ -341,19 +344,27 @@ export function createWithdrawalService({ db, rpc, network, commitment, cipher }
           throw new Error('Legacy withdrawal idempotency state changed before atomic completion');
         }
         await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
-        // Broadcast already succeeded and the signature was persisted before
-        // it. Preserve the real chain result for the caller, but leave the
-        // reservation processing so reconciliation—not a new send—resolves
-        // the failed atomic ledger/completion commit.
+      } catch (cause) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        // A chain submission already happened. Never return a normal success
+        // when its ledger/idempotency commit is missing or ambiguous.
+        const error = new Error(
+          'Withdrawal may have been broadcast, but durable ledger completion failed. Do not submit it again with a new key; reconciliation must resolve the persisted signature.',
+          { cause }
+        );
+        error.statusCode = 503;
+        error.code = 'WITHDRAWAL_RECONCILIATION_REQUIRED';
+        error.signature = sent.signature;
+        error.idempotencyKey = idempotencyKey;
         console.error('[WITHDRAWAL RECONCILIATION REQUIRED]', {
           idempotencyKey,
           signature: sent.signature,
-          message: error.message
+          code: cause.code ?? 'DB_COMMIT_ERROR',
+          message: cause.message
         });
+        throw error;
       } finally {
-        client.release();
+        client?.release();
       }
 
       return response;
