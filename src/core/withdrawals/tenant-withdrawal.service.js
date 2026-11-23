@@ -85,7 +85,9 @@ export function createTenantWithdrawalService({
   }
 
   async function reserve({ tenantId, credentialId, approvalReference, idempotencyKey, requestHash, walletPublicKey, toPublicKey, amountLamports }) {
-    const inserted = await db.query(
+    let inserted;
+    try {
+      inserted = await db.query(
       `INSERT INTO api_idempotency_keys
          (tenant_id, tenant_credential_id, approval_reference, idempotency_key,
           request_hash, status, wallet_public_key, operation, network, to_public_key, amount_lamports)
@@ -93,7 +95,17 @@ export function createTenantWithdrawalService({
        ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
        RETURNING id`,
       [tenantId, credentialId, approvalReference, idempotencyKey, requestHash, walletPublicKey, network, toPublicKey, amountLamports]
-    );
+      );
+    } catch (error) {
+      if (error?.code === '23505' &&
+          error?.constraint === 'uq_withdrawal_one_processing_per_tenant_wallet') {
+        throw conflict(
+          'Another withdrawal from this tenant wallet is still processing or awaiting reconciliation',
+          'WALLET_WITHDRAWAL_IN_PROGRESS'
+        );
+      }
+      throw error;
+    }
     if (inserted.rowCount === 1) return { reserved: true, id: inserted.rows[0].id };
 
     const existingResult = await db.query(
