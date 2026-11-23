@@ -72,6 +72,11 @@ export function createServices(overrides = {}) {
     cipher,
     log: deps.log ?? (() => {})
   });
+  const sweeper = typeof deps.rpc?.estimateSolSweep === 'function' &&
+    typeof deps.rpc?.sendSolWithSigner === 'function' &&
+    typeof deps.rpc?.getSlot === 'function'
+    ? createSweeperService({ ...deps, db: deps.db, log: deps.log ?? (() => {}) })
+    : null;
 
   const depositService = createDepositService({ ...deps, log: deps.log ?? (() => {}) });
   const withdrawalReconciliation = createWithdrawalReconciliationService({
@@ -112,11 +117,7 @@ export function createServices(overrides = {}) {
     hdWallets: hdWalletService,
     childWallets: childWalletService,
     hotWallets: hotWalletService,
-    sweeper: createSweeperService({
-      ...deps,
-      db: deps.db,
-      log: deps.log ?? (() => {})
-    }),
+    sweeper,
     tenantWallets: createTenantWalletService({ ...deps, log: deps.log ?? (() => {}) }),
     tenantWithdrawalPolicy,
     tenantWithdrawals: createTenantWithdrawalService({
