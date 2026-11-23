@@ -215,7 +215,7 @@ export type TenantRecord = {
   id: string;
   tenantCode: string;
   displayName: string;
-  status: string;
+  status: 'pending' | 'active' | 'suspended' | 'disabled';
   hdWallets: number;
   childWallets: number;
   createdAt: string;
