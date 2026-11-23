@@ -37,7 +37,13 @@ export async function assertDepositWorkerRuntimeRole(db) {
             has_table_privilege(session_user, 'public.deposit_reconciliation_cursors', 'UPDATE') AS can_update_reconciliation_cursor,
             has_table_privilege(session_user, 'public.deposit_reconciliation_events', 'INSERT') AS can_append_reconciliation_events,
             has_table_privilege(session_user, 'public.webhook_outbox', 'INSERT') AS can_append_webhook_outbox,
-            has_table_privilege(session_user, 'public.operational_events', 'INSERT') AS can_append_operational_events
+            has_table_privilege(session_user, 'public.operational_events', 'INSERT') AS can_append_operational_events,
+            has_table_privilege(session_user, 'public.webhook_outbox', 'SELECT') AS can_read_webhook_outbox,
+            has_column_privilege(session_user, 'public.webhook_outbox', 'event_id', 'SELECT') AS can_return_webhook_event_id,
+            has_column_privilege(session_user, 'public.webhook_outbox', 'payload', 'SELECT') AS can_read_webhook_payload,
+            has_table_privilege(session_user, 'public.operational_events', 'SELECT') AS can_read_operational_events,
+            has_column_privilege(session_user, 'public.operational_events', 'event_id', 'SELECT') AS can_return_operational_event_id,
+            has_column_privilege(session_user, 'public.operational_events', 'payload', 'SELECT') AS can_read_operational_payload
        FROM pg_roles AS role
       WHERE role.rolname = session_user`
   );
@@ -69,7 +75,13 @@ export async function assertDepositWorkerRuntimeRole(db) {
     role.can_update_reconciliation_cursor === true &&
     role.can_append_reconciliation_events === true &&
     role.can_append_webhook_outbox === true &&
-    role.can_append_operational_events === true;
+    role.can_append_operational_events === true &&
+    role.can_read_webhook_outbox === false &&
+    role.can_return_webhook_event_id === true &&
+    role.can_read_webhook_payload === false &&
+    role.can_read_operational_events === false &&
+    role.can_return_operational_event_id === true &&
+    role.can_read_operational_payload === false;
 
   if (!valid) {
     const error = new Error(
