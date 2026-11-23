@@ -161,7 +161,7 @@ export async function tenantWalletRoutes(app) {
       requireApprovalScope: true
     });
     reply.header('Cache-Control', 'no-store');
-    return reply.code(201).send({ approval });
+    return reply.code(approval.replayed ? 200 : 201).send({ approval });
   });
 
   app.get('/withdrawals', {
