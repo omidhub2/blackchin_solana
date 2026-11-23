@@ -108,14 +108,11 @@ test('legacy deposit verification cannot target an explicitly tenant-owned addre
   const account = {
     id: '11', hd_wallet_id: '22', public_key: destination, account_index: 0,
     derivation_path: "m/44'/501'/0'/0'", wallet_type: 'hd_child',
-    network: 'devnet', status: 'active'
+    network: 'devnet', status: 'active', tenant_id: '41'
   };
   const root = { id: '22', network: 'devnet', status: 'active' };
   const db = {
     async query(sql) {
-      if (sql.includes('SELECT tenant_id FROM wallet_accounts')) {
-        return { rows: [{ tenant_id: '41' }], rowCount: 1 };
-      }
       if (sql.includes('FROM wallet_accounts WHERE public_key')) {
         return { rows: [account], rowCount: 1 };
       }
