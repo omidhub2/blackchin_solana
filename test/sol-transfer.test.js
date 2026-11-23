@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import {
   extractIncomingTransfers,
   formatLamports,
-  parseSolToLamports
+  parseSolToLamports,
+  confirmWithBlockhashWindow,
+  sendSolWithSigner
 } from '../Solana/solTransfer.js';
+import { Keypair } from '@solana/web3.js';
 
 test('SOL amount conversion uses exact integer lamports', () => {
   assert.equal(parseSolToLamports('1').toString(), '1000000000');
@@ -154,4 +157,74 @@ test('unparsed inner instructions do not crash transfer extraction', () => {
 
   assert.equal(transfers.length, 1);
   assert.equal(transfers[0].amountSol, '1');
+});
+
+
+test('confirmation helper resolves successfully using the injected RPC connection', async () => {
+  const rpcConnection = {
+    async getBlockHeight() { return 100; },
+    async confirmTransaction() {
+      return { context: { slot: 321 }, value: { err: null } };
+    }
+  };
+  const result = await confirmWithBlockhashWindow({
+    signature: 'test-signature',
+    latestBlockhash: { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 200 },
+    commitmentLevel: 'confirmed',
+    rpcConnection
+  });
+  assert.equal(result.context.slot, 321);
+  assert.equal(result.value.err, null);
+});
+
+test('sendSolWithSigner persists the signed identity before broadcast and confirms it', async () => {
+  const sender = Keypair.generate();
+  const recipient = Keypair.generate().publicKey;
+  const blockhash = Keypair.generate().publicKey.toBase58();
+  const calls = [];
+  let persistedSignature = null;
+  const rpcConnection = {
+    async getLatestBlockhash() {
+      calls.push('blockhash');
+      return { blockhash, lastValidBlockHeight: 500 };
+    },
+    async getFeeForMessage() {
+      calls.push('fee');
+      return 5000;
+    },
+    async getBalance() {
+      calls.push('balance');
+      return 10_000_000;
+    },
+    async sendRawTransaction() {
+      calls.push('broadcast');
+      assert.ok(persistedSignature, 'signature must be persisted before broadcast');
+      return persistedSignature;
+    },
+    async getBlockHeight() {
+      return 100;
+    },
+    async confirmTransaction() {
+      calls.push('confirm');
+      return { context: { slot: 777 }, value: { err: null } };
+    }
+  };
+
+  const result = await sendSolWithSigner({
+    fromPublicKey: sender.publicKey.toBase58(),
+    toPublicKey: recipient.toBase58(),
+    amountSol: '0.001',
+    getKeypair: () => sender,
+    rpcConnection,
+    onSigned: async ({ signature }) => {
+      calls.push('persist');
+      persistedSignature = signature;
+    }
+  });
+
+  assert.equal(result.sent, true);
+  assert.equal(result.signature, persistedSignature);
+  assert.equal(result.slot, 777);
+  assert.ok(calls.indexOf('persist') < calls.indexOf('broadcast'));
+  assert.ok(calls.indexOf('broadcast') < calls.indexOf('confirm'));
 });
