@@ -17,7 +17,7 @@
 - Random 32-byte session token; only its SHA-256 digest is stored.
 - HTTP-only, SameSite=Strict cookie; `Secure` in production.
 - Random CSRF token bound to the session; required in `X-CSRF-Token` for every
-  POST/PATCH/DELETE.
+  POST/PUT/PATCH/DELETE.
 - Roles: `admin`, `operator`, `viewer`.
 - Dashboard credentials are never accepted by the partner API and vice versa.
 
