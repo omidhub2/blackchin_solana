@@ -62,6 +62,7 @@ function workerSnapshot(worker) {
 export function createHealthService({
   pool,
   additionalPools = {},
+  metrics = null,
   rpc = null,
   rpcRequired = false,
   scanner = null,
@@ -121,6 +122,10 @@ export function createHealthService({
         checks.rpc = probe.ok && Number.isSafeInteger(probe.value) ? 'ok' : probe.code ?? 'error';
         if (rpcRequired && checks.rpc !== 'ok') ready = false;
         if (checks.rpc !== 'ok') degraded.push('rpc_unavailable');
+        if (metrics) {
+          metrics.setGauge('blackchin_rpc_up', checks.rpc === 'ok' ? 1 : 0, { network: network ?? 'unknown' });
+          metrics.setGauge('blackchin_rpc_probe_latency_ms', rpcLatencyMs, { network: network ?? 'unknown' });
+        }
         if (rpcLatencyMs > 1_500) degraded.push('rpc_latency');
       } else if (rpcRequired) {
         checks.rpc = 'not_configured';
@@ -129,6 +134,11 @@ export function createHealthService({
 
       const poolStats = poolSnapshot(pool);
       const pools = { primary: poolStats };
+      if (metrics && poolStats) {
+        metrics.setGauge('blackchin_database_pool_connections', poolStats.total, { pool: 'primary', state: 'total' });
+        metrics.setGauge('blackchin_database_pool_connections', poolStats.idle, { pool: 'primary', state: 'idle' });
+        metrics.setGauge('blackchin_database_pool_waiting', poolStats.waiting, { pool: 'primary' });
+      }
       if (poolStats?.waiting >= maxPoolWaiting && maxPoolWaiting > 0) {
         degraded.push('database_pool_saturation');
       }
@@ -140,6 +150,11 @@ export function createHealthService({
           now
         );
         pools[name] = poolSnapshot(additionalPool);
+        if (metrics && pools[name]) {
+          metrics.setGauge('blackchin_database_pool_connections', pools[name].total, { pool: name, state: 'total' });
+          metrics.setGauge('blackchin_database_pool_connections', pools[name].idle, { pool: name, state: 'idle' });
+          metrics.setGauge('blackchin_database_pool_waiting', pools[name].waiting, { pool: name });
+        }
         const checkName = `${name}Database`;
         checks[checkName] = probe.ok && probe.value.rows[0]?.ok === 1 ? 'ok' : 'error';
         if (checks[checkName] !== 'ok') ready = false;
@@ -163,6 +178,10 @@ export function createHealthService({
         const snapshot = workerSnapshot(worker);
         workers[name] = snapshot;
         checks[name] = snapshot.state;
+        if (metrics) {
+          metrics.setGauge('blackchin_worker_up', snapshot.state === 'running' && !snapshot.stale ? 1 : 0, { worker: name });
+          metrics.setGauge('blackchin_worker_consecutive_failures', snapshot.consecutiveFailures, { worker: name });
+        }
         if (name !== 'webhookDelivery' &&
             (snapshot.state !== 'running' || snapshot.stale || !snapshot.hasLock)) {
           ready = false;
@@ -185,6 +204,11 @@ export function createHealthService({
       if (typeof backlogStats === 'function') {
         try {
           backlogs = await backlogStats();
+          if (metrics) {
+            for (const [name, value] of Object.entries(backlogs)) {
+              if (Number.isFinite(value)) metrics.setGauge(`blackchin_backlog_${name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`, value);
+            }
+          }
           if (backlogs.signedWithdrawalsPending > 0) degraded.push('signed_withdrawals_pending');
           if (backlogs.ledgerUnderReview > 0 ||
               backlogs.depositReconciliationUnderReview > 0 ||
