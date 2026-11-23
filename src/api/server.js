@@ -28,7 +28,7 @@ function buildDistributedLimiter(db) {
  *   logger?: boolean|object,    // Fastify logger option
  * }} [options]
  */
-export function buildServer({ services, logger = true, health = null } = {}) {
+export function buildServer({ services, logger = true, health = null, tenantPool = null, tenantContextSigner = null, createTenantServices = null } = {}) {
   // Fail closed before the port is opened when the API key is missing.
   assertApiKeyConfigured();
   const app = Fastify({
@@ -61,6 +61,9 @@ export function buildServer({ services, logger = true, health = null } = {}) {
   });
 
   app.decorate('services', services ?? null);
+  app.decorate('tenantPool', tenantPool);
+  app.decorate('tenantContextSigner', tenantContextSigner);
+  app.decorate('createTenantServices', createTenantServices);
   app.decorateRequest('services', null);
   app.decorateRequest('tenant', null);
 
