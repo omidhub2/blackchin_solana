@@ -257,11 +257,43 @@ export default function SecurityPage() {
     { key: 'single', header: t('security.maxSingle'), render: (row) => <span className="mono text-slate-400">{formatSol(row.maxSingleLamports)} SOL</span> },
     { key: 'daily', header: t('security.maxDaily'), render: (row) => <span className="mono text-slate-400">{formatSol(row.maxDailyLamports)} SOL</span> },
     { key: 'version', header: t('security.version'), render: (row) => <span className="mono text-slate-400">v{row.policyVersion}</span> },
-    { key: 'updated', header: t('common.updated'), render: (row) => <span className="text-[11px] text-slate-500">{formatDateTime(row.updatedAt)}</span> }
+    { key: 'updated', header: t('common.updated'), render: (row) => <span className="text-[11px] text-slate-500">{formatDateTime(row.updatedAt)}</span> },
+    {
+      key: 'actions',
+      header: 'Actions',
+      searchable: false,
+      render: (row) => (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary !px-3 !py-1.5 text-xs"
+            onClick={() => {
+              setTenantId(row.tenantId);
+              setEditingPolicyTenantId(row.tenantId);
+            }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn-secondary !border-rose-500/20 !px-3 !py-1.5 text-xs !text-rose-300"
+            disabled={deletePolicy.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete the withdrawal policy for ${row.tenantName}? Pending approvals will be revoked and withdrawals will remain blocked.`)) {
+                deletePolicy.mutate(row.tenantId);
+              }
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )
+    }
   ];
 
-  const mutationError = createTenantMutation.error ?? tenantStatusMutation.error ?? configure.error ?? freeze.error ?? unfreeze.error ??
-    addDestination.error ?? activateDestination.error ?? revokeDestination.error ?? issueApproval.error ?? revokeApproval.error;
+  const mutationError = createTenantMutation.error ?? tenantStatusMutation.error ?? configure.error ?? updatePolicy.error ??
+    deletePolicy.error ?? freeze.error ?? unfreeze.error ?? addDestination.error ?? activateDestination.error ??
+    revokeDestination.error ?? issueApproval.error ?? revokeApproval.error;
 
   return (
     <div className="space-y-6">
