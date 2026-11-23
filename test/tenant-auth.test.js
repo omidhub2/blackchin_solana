@@ -84,7 +84,8 @@ test('tenant auth rejects a missing API credential', async () => {
 });
 
 test('tenant auth attaches trusted tenant identity and credential scopes', async () => {
-  const hook = tenantAuthHook();
+  const db = credentialDb();
+  const hook = tenantAuthHook(db);
   const reply = replyStub();
   const request = { headers: { 'x-api-key': 'bc_live_prefix.secret' } };
 
