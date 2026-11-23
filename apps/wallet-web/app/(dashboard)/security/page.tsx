@@ -18,6 +18,7 @@ import type {
   PolicyRecord,
   TenantRecord,
   TenantWithdrawalPolicy,
+  WithdrawalApproval,
   WithdrawalDestination
 } from '@/lib/types';
 
@@ -80,6 +81,11 @@ export default function SecurityPage() {
     queryFn: () => api.get<{ type: string; items: ChildWallet[] }>('/wallets', { type: 'child', tenantId }),
     enabled: Boolean(tenantId)
   });
+  const approvals = useQuery({
+    queryKey: ['tenant-withdrawal-approvals', tenantId],
+    queryFn: () => api.get<ListResponse<WithdrawalApproval>>(`/tenants/${tenantId}/withdrawal-approvals`),
+    enabled: Boolean(tenantId)
+  });
 
   useEffect(() => {
     if (policy.data) {
@@ -127,6 +133,7 @@ export default function SecurityPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['tenant-withdrawal-policy', tenantId] }),
       queryClient.invalidateQueries({ queryKey: ['tenant-withdrawal-destinations', tenantId] }),
+      queryClient.invalidateQueries({ queryKey: ['tenant-withdrawal-approvals', tenantId] }),
       queryClient.invalidateQueries({ queryKey: ['security'] }),
       queryClient.invalidateQueries({ queryKey: ['tenants'] })
     ]);
@@ -169,6 +176,12 @@ export default function SecurityPage() {
     mutationFn: (id: string) => api.post(`/tenants/${tenantId}/withdrawal-destinations/${id}/revoke`, {}),
     onSuccess: refreshPolicyData
   });
+  const revokeApproval = useMutation({
+    mutationFn: (reference: string) => api.post(
+      `/tenants/${tenantId}/withdrawal-approvals/${encodeURIComponent(reference)}/revoke`, {}
+    ),
+    onSuccess: refreshPolicyData
+  });
   const issueApproval = useMutation({
     mutationFn: () => api.post(`/tenants/${tenantId}/withdrawal-approvals`, {
       credentialId: approvalCredentialId,
@@ -197,7 +210,7 @@ export default function SecurityPage() {
   ];
 
   const mutationError = configure.error ?? freeze.error ?? unfreeze.error ??
-    addDestination.error ?? activateDestination.error ?? revokeDestination.error ?? issueApproval.error;
+    addDestination.error ?? activateDestination.error ?? revokeDestination.error ?? issueApproval.error ?? revokeApproval.error;
 
   return (
     <div className="space-y-6">
@@ -387,6 +400,33 @@ export default function SecurityPage() {
             {issueApproval.isPending ? t('common.loading') : t('security.issueApproval')}
           </button>
           <p className="text-xs text-slate-500">Approval is bound to one tenant credential, one source wallet, one allowlisted destination and one exact SOL amount. It expires automatically.</p>
+        </Panel>
+      ) : null}
+
+      {tenantId ? (
+        <Panel className="space-y-3 p-5">
+          <h2 className="text-sm font-semibold text-slate-200">{t('security.approvalHistory')}</h2>
+          <div className="space-y-2">
+            {(approvals.data?.items ?? []).map((approval) => (
+              <div key={approval.approvalReference} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
+                <div className="min-w-0 space-y-1">
+                  <p className="mono break-all text-xs text-slate-200">{approval.approvalReference}</p>
+                  <p className="text-xs text-slate-400">{formatSol(approval.amountLamports)} SOL · {approval.network} · Credential #{approval.credentialId}</p>
+                  <p className="mono truncate text-[11px] text-slate-500">{approval.walletPublicKey} → {approval.destinationPublicKey}</p>
+                  <p className="text-[11px] text-slate-500">Expires {formatDateTime(approval.expiresAt)}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={approval.status} />
+                  {approval.status === 'approved' ? (
+                    <button type="button" className="btn-secondary !px-3 !py-1.5 text-xs" disabled={revokeApproval.isPending} onClick={() => revokeApproval.mutate(approval.approvalReference)}>
+                      {t('security.revokeApproval')}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {(approvals.data?.items ?? []).length === 0 ? <p className="text-sm text-slate-500">{t('common.noData')}</p> : null}
+          </div>
         </Panel>
       ) : null}
 
