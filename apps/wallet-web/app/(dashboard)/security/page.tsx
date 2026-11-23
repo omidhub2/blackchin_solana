@@ -37,6 +37,7 @@ export default function SecurityPage() {
 
   const [tenantId, setTenantId] = useState('');
   const [editingPolicyTenantId, setEditingPolicyTenantId] = useState<string | null>(null);
+  const [viewingPolicy, setViewingPolicy] = useState<PolicyRecord | null>(null);
   const [newTenantCode, setNewTenantCode] = useState('');
   const [newTenantName, setNewTenantName] = useState('');
   const [enabled, setEnabled] = useState(false);
@@ -270,10 +271,7 @@ export default function SecurityPage() {
           <button
             type="button"
             className="btn-secondary !px-3 !py-1.5 text-xs"
-            onClick={() => {
-              setEditingPolicyTenantId(null);
-              setTenantId(row.tenantId);
-            }}
+            onClick={() => setViewingPolicy(row)}
           >
             View details
           </button>
@@ -320,6 +318,41 @@ export default function SecurityPage() {
   return (
     <div className="space-y-6">
       <PageHeader title={t('security.title')} subtitle={t('security.subtitle')} />
+
+      {viewingPolicy ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setViewingPolicy(null);
+        }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="policy-details-title" className="w-full max-w-2xl rounded-2xl border border-white/10 bg-slate-950 p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 id="policy-details-title" className="text-lg font-semibold text-slate-100">Withdrawal policy details</h2>
+                <p className="mt-1 text-sm text-slate-400">{viewingPolicy.tenantName} · {viewingPolicy.tenantCode} · Tenant #{viewingPolicy.tenantId}</p>
+              </div>
+              <button type="button" className="btn-secondary !px-3 !py-1.5 text-xs" onClick={() => setViewingPolicy(null)}>Close</button>
+            </div>
+            <dl className="grid gap-3 sm:grid-cols-2">
+              {[
+                ['Policy status', viewingPolicy.enabled ? 'Enabled' : 'Disabled'],
+                ['Emergency freeze', viewingPolicy.emergencyFrozen ? 'Frozen' : 'Not frozen'],
+                ['Maximum per withdrawal', `${formatSol(viewingPolicy.maxSingleLamports)} SOL (${viewingPolicy.maxSingleLamports} lamports)`],
+                ['Maximum per day', `${formatSol(viewingPolicy.maxDailyLamports)} SOL (${viewingPolicy.maxDailyLamports} lamports)`],
+                ['Maximum per week', `${formatSol(viewingPolicy.maxWeeklyLamports)} SOL (${viewingPolicy.maxWeeklyLamports} lamports)`],
+                ['Daily withdrawal count', String(viewingPolicy.maxDailyCount)],
+                ['Weekly withdrawal count', String(viewingPolicy.maxWeeklyCount)],
+                ['Policy version', `v${viewingPolicy.policyVersion}`],
+                ['Freeze reason', viewingPolicy.freezeReason || '—'],
+                ['Last updated', formatDateTime(viewingPolicy.updatedAt)]
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                  <dt className="text-xs text-slate-500">{label}</dt>
+                  <dd className="mt-1 break-words text-sm text-slate-200">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        </div>
+      ) : null}
 
       <Panel className="space-y-4 p-5">
         <div>
