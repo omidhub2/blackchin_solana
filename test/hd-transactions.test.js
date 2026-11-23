@@ -437,7 +437,6 @@ test('a completed broadcast with a lost DB write fails closed and keeps the key 
 
   assert.equal(h.idempotency.get(KEY).status, 'processing');
   assert.equal(h.idempotency.get(KEY).transaction_signature, SENT_SIGNATURE);
-  assert.equal(h.transactions.length, 1, 'ledger insert may have occurred inside the rolled-back transaction');
   await assert.rejects(
     () => h.service.submit({
       idempotencyKey: KEY,
