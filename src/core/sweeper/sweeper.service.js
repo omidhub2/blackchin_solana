@@ -73,7 +73,8 @@ function mapJob(row) {
 export function createSweeperService({
   db, rpc, cipher, network, commitment = 'confirmed',
   signer = withSigningKey, log = () => {},
-  executionEnabled = false
+  executionEnabled = false,
+  allowMainnetExecution = false
 }) {
   if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
     throw new TypeError('A PostgreSQL sweeper database is required');
@@ -267,6 +268,27 @@ export function createSweeperService({
       const amount = parseUnsigned(job.amount_raw, 'amount_raw');
       if (amount <= 0n || amount > MAX_SAFE_LAMPORTS) {
         throw conflict('Sweep amount is outside the supported SOL range', 'SWEEP_AMOUNT_INVALID');
+      }
+      if (network === 'mainnet-beta' && allowMainnetExecution !== true) {
+        throw serviceUnavailable('Mainnet sweep execution requires its separate explicit safety switch', 'SWEEP_MAINNET_DISABLED');
+      }
+
+      // Re-read balance and fee immediately before signing. A stale plan must
+      // never consume the policy-retained SOL reserve.
+      const currentEstimate = await rpc.estimateSolSweep({
+        fromPublicKey: job.source_public_key,
+        toPublicKey: job.destination_public_key,
+        amountLamports: amount.toString(),
+        requestedCommitment: commitment
+      });
+      const currentBalance = parseUnsigned(currentEstimate.availableLamports, 'availableLamports');
+      const currentFee = parseUnsigned(currentEstimate.estimatedFeeLamports, 'estimatedFeeLamports');
+      const retained = parseUnsigned(job.rent_exempt_lamports, 'rent_exempt_lamports');
+      if (currentFee > parseUnsigned(policy.max_fee_lamports, 'max_fee_lamports')) {
+        throw conflict('Current SOL network fee exceeds the configured sweep fee ceiling', 'SWEEP_FEE_LIMIT_EXCEEDED');
+      }
+      if (currentBalance < amount + currentFee + retained) {
+        throw conflict('Source balance changed; executing this plan would violate the retained SOL reserve', 'SWEEP_BALANCE_CHANGED');
       }
 
       let signaturePersisted = false;
