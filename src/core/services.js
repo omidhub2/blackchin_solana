@@ -75,7 +75,7 @@ export function createServices(overrides = {}) {
   const sweeper = typeof deps.rpc?.estimateSolSweep === 'function' &&
     typeof deps.rpc?.sendSolWithSigner === 'function' &&
     typeof deps.rpc?.getSlot === 'function'
-    ? createSweeperService({ ...deps, db: deps.db, log: deps.log ?? (() => {}) })
+    ? createSweeperService({ ...deps, db: deps.sweeperDb ?? deps.db, log: deps.log ?? (() => {}) })
     : null;
 
   const depositService = createDepositService({ ...deps, log: deps.log ?? (() => {}) });
