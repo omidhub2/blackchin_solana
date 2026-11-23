@@ -29,7 +29,9 @@ export const OPERATIONAL_EVENT_TYPES = Object.freeze([
   'api_credential.revoked',
   'webhook_endpoint.created',
   'webhook_endpoint.rotated',
-  'system.health_changed'
+  'system.health_changed',
+  'tenant.created',
+  'tenant.status_changed'
 ]);
 
 const EVENT_TYPE_SET = new Set(OPERATIONAL_EVENT_TYPES);
