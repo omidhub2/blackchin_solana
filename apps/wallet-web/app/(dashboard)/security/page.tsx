@@ -36,6 +36,7 @@ export default function SecurityPage() {
   const queryClient = useQueryClient();
 
   const [tenantId, setTenantId] = useState('');
+  const [editingPolicyTenantId, setEditingPolicyTenantId] = useState<string | null>(null);
   const [newTenantCode, setNewTenantCode] = useState('');
   const [newTenantName, setNewTenantName] = useState('');
   const [enabled, setEnabled] = useState(false);
@@ -178,6 +179,27 @@ export default function SecurityPage() {
       maxWeeklyCount: Number(maxWeeklyCount)
     }),
     onSuccess: refreshPolicyData
+  });
+  const updatePolicy = useMutation({
+    mutationFn: () => api.patch<TenantWithdrawalPolicy>(`/tenants/${tenantId}/withdrawal-policy`, {
+      enabled,
+      maxSingleLamports,
+      maxDailyLamports,
+      maxWeeklyLamports,
+      maxDailyCount: Number(maxDailyCount),
+      maxWeeklyCount: Number(maxWeeklyCount)
+    }),
+    onSuccess: refreshPolicyData
+  });
+  const deletePolicy = useMutation({
+    mutationFn: (id: string) => api.delete<{ tenantId: string; deleted: boolean }>(`/tenants/${id}/withdrawal-policy`),
+    onSuccess: async ({ tenantId: deletedTenantId }) => {
+      if (editingPolicyTenantId === deletedTenantId) setEditingPolicyTenantId(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['tenant-withdrawal-policy', deletedTenantId] }),
+        queryClient.invalidateQueries({ queryKey: ['security'] })
+      ]);
+    }
   });
   const freeze = useMutation({
     mutationFn: () => api.post(`/tenants/${tenantId}/withdrawal-policy/freeze`, { reason: freezeReason }),
