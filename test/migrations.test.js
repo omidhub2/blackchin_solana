@@ -173,6 +173,7 @@ test('hardening migrations parse into ordered, checksummed versions', async () =
   assert.ok(versions.includes('0012'));
   assert.ok(versions.includes('0013'));
   assert.ok(versions.includes('0014'));
+  assert.ok(versions.includes('0015'));
   assert.equal(new Set(versions).size, versions.length);
   assert.deepEqual(versions, [...versions].sort());
 
@@ -359,5 +360,27 @@ test('0014 installs signed tenant context validation and restrictive RLS policie
   assert.match(sql, /WITH CHECK \(tenant_id = private\.current_tenant_id\(\)\)/i);
   assert.doesNotMatch(sql, /FORCE ROW LEVEL SECURITY/i);
   assert.doesNotMatch(sql, /UPDATE\s+(?:wallets|wallet_accounts|hd_wallets)[\s\S]*SET tenant_id/i);
+  assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
+});
+
+test('0015 installs immutable ledger/idempotency guards and per-wallet withdrawal serialization', async () => {
+  const sql = await readFile(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '0015_ledger_atomicity.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /uq_withdrawal_one_processing_per_tenant_wallet/i);
+  assert.match(sql, /uq_withdrawal_one_processing_per_legacy_wallet/i);
+  assert.match(sql, /status = 'processing'/i);
+  assert.match(sql, /operation = 'withdrawal'/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION enforce_blockchain_transaction_integrity/i);
+  assert.match(sql, /NEW\.tenant_id IS DISTINCT FROM OLD\.tenant_id/i);
+  assert.match(sql, /NEW\.amount_lamports IS DISTINCT FROM OLD\.amount_lamports/i);
+  assert.match(sql, /Invalid blockchain transaction status transition/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION enforce_idempotency_reservation_integrity/i);
+  assert.match(sql, /NEW\.request_hash IS DISTINCT FROM OLD\.request_hash/i);
+  assert.match(sql, /a persisted transaction signature cannot be replaced or cleared/i);
+  assert.match(sql, /Invalid idempotency status transition/i);
+  assert.match(sql, /HAVING COUNT\(\*\) > 1/i);
   assert.doesNotMatch(sql, /DROP TABLE|TRUNCATE/i);
 });
