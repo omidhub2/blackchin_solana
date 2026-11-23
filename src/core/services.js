@@ -101,19 +101,22 @@ export function createServices(overrides = {}) {
     log: deps.log ?? (() => {})
   });
 
+  const tenantWithdrawalPolicy = createTenantWithdrawalPolicyService({
+    db: deps.db,
+    log: deps.log ?? (() => {})
+  });
+
   return Object.freeze({
     deps,
     hdWallets: hdWalletService,
     childWallets: childWalletService,
     hotWallets: hotWalletService,
     tenantWallets: createTenantWalletService({ ...deps, log: deps.log ?? (() => {}) }),
+    tenantWithdrawalPolicy,
     tenantWithdrawals: createTenantWithdrawalService({
       ...deps,
       hotWallets: hotWalletService,
-      tenantWithdrawalPolicy: createTenantWithdrawalPolicyService({
-        db: deps.db,
-        log: deps.log ?? (() => {})
-      }),
+      tenantWithdrawalPolicy,
       log: deps.log ?? (() => {})
     }),
     balances: createBalanceService(deps),
