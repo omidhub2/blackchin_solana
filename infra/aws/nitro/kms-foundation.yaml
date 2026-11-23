@@ -34,13 +34,14 @@ Resources:
           - Sid: AllowOnlyMeasuredNitroEnclaveDataKeyOperations
             Effect: Allow
             Principal:
-              AWS: !GetAtt NitroParentRole.Arn
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
             Action:
               - kms:Decrypt
               - kms:GenerateDataKey
-              - kms:DescribeKey
             Resource: '*'
             Condition:
+              ArnEquals:
+                aws:PrincipalArn: !GetAtt NitroParentRole.Arn
               StringEqualsIgnoreCase:
                 kms:RecipientAttestation:ImageSha384: !Ref EnclaveImageSha384
 
@@ -102,7 +103,6 @@ Resources:
                 Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
-                  - kms:DescribeKey
                 Resource: !GetAtt WalletEnvelopeKey.Arn
                 Condition:
                   StringEqualsIgnoreCase:
