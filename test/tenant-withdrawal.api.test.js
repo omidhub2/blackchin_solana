@@ -5,6 +5,29 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { Keypair } from '@solana/web3.js';
 import { buildServer } from '../src/api/server.js';
+import { createTenantContextSigner } from '../src/infrastructure/security/tenant-context.js';
+
+
+function buildTenantTestServer(fake) {
+  const tenantPool = {
+    async connect() {
+      return {
+        async query() { return { rows: [], rowCount: 0 }; },
+        release() {}
+      };
+    }
+  };
+  return buildServer({
+    logger: false,
+    services: fake.services,
+    tenantPool,
+    tenantContextSigner: createTenantContextSigner('a'.repeat(64)),
+    createTenantServices: (tenantDb) => ({
+      ...fake.services,
+      deps: { ...fake.services.deps, db: tenantDb }
+    })
+  });
+}
 
 function harness(scopes = ['withdrawals:estimate', 'withdrawals:submit']) {
   const apiKey = 'bc_live_tenantwithdraw.secret';
@@ -16,7 +39,7 @@ function harness(scopes = ['withdrawals:estimate', 'withdrawals:submit']) {
       if (String(sql).startsWith('SELECT')) return {
         rowCount: 1,
         rows: [{
-          credential_id: 'credential-1', tenant_id: '42', key_prefix: 'bc_live_tenantwithdraw',
+          credential_id: '1', tenant_id: '42', key_prefix: 'bc_live_tenantwithdraw',
           secret_hash: secretHash, scopes, credential_status: 'active', expires_at: null,
           revoked_at: null, credential_created_at: new Date(), tenant_code: 'tenant-42',
           display_name: 'Tenant 42', tenant_status: 'active', metadata: {},
@@ -46,7 +69,7 @@ const recipient = Keypair.generate().publicKey.toBase58();
 
 test('partner approval issuance requires its separate scope and is bound to authenticated tenant credential', async () => {
   const h = harness(['withdrawals:submit', 'withdrawals:approve']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST',
@@ -66,7 +89,7 @@ test('partner approval issuance requires its separate scope and is bound to auth
     assert.equal(response.statusCode, 201);
     const issued = h.calls.find(([kind]) => kind === 'approval');
     assert.equal(issued[1].tenantId, '42');
-    assert.equal(issued[1].credentialId, 'credential-1');
+    assert.equal(issued[1].credentialId, '1');
     assert.equal(issued[1].amountLamports, '250000000');
     assert.equal(issued[1].network, 'devnet');
     assert.equal(issued[1].issuer, 'tenant_credential:credential-1');
@@ -78,7 +101,7 @@ test('partner approval issuance requires its separate scope and is bound to auth
 
 test('partner approval issuance is forbidden without withdrawals:submit scope', async () => {
   const h = harness(['withdrawals:approve']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST',
@@ -101,7 +124,7 @@ test('partner approval issuance is forbidden without withdrawals:submit scope', 
 
 test('partner approval issuance is forbidden without withdrawals:approve scope', async () => {
   const h = harness(['withdrawals:submit']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST',
@@ -124,7 +147,7 @@ test('partner approval issuance is forbidden without withdrawals:approve scope',
 
 test('tenant withdrawal estimate uses authenticated tenant identity', async () => {
   const h = harness();
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/withdrawals/estimate',
@@ -140,7 +163,7 @@ test('tenant withdrawal estimate uses authenticated tenant identity', async () =
 
 test('tenant withdrawal submit requires idempotency key and a partner approval reference', async () => {
   const h = harness();
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/withdrawals',
@@ -158,7 +181,7 @@ test('tenant withdrawal submit requires idempotency key and a partner approval r
 
 test('tenant withdrawal history is scoped to the authenticated tenant', async () => {
   const h = harness(['withdrawals:read']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'GET', url: '/api/v1/tenant/withdrawals?limit=10&offset=5',
@@ -171,7 +194,7 @@ test('tenant withdrawal history is scoped to the authenticated tenant', async ()
 
 test('tenant withdrawal detail lookup receives authenticated tenant and idempotency key', async () => {
   const h = harness(['withdrawals:read']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'GET', url: '/api/v1/tenant/withdrawals/tenant-withdrawal-key-001',
@@ -183,7 +206,7 @@ test('tenant withdrawal detail lookup receives authenticated tenant and idempote
 });
 test('tenant withdrawal submit accepts the supported withdrawals:submit scope', async () => {
   const h = harness(['withdrawals:submit']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/withdrawals',
@@ -197,7 +220,7 @@ test('tenant withdrawal submit accepts the supported withdrawals:submit scope', 
 
 test('tenant withdrawal routes enforce operation scopes', async () => {
   const h = harness(['withdrawals:estimate']);
-  const app = buildServer({ logger: false, services: h.services });
+  const app = buildTenantTestServer(h);
   try {
     const response = await app.inject({
       method: 'POST', url: '/api/v1/tenant/withdrawals',
