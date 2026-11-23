@@ -110,9 +110,11 @@ pub fn sign_solana_message(
     message: &[u8],
 ) -> Result<[u8; 64], SignerCoreError> {
     if account_index > MAX_ACCOUNT_INDEX {
+        mnemonic_phrase.zeroize();
         return Err(SignerCoreError::InvalidAccountIndex);
     }
     if expected_public_key.len() != 32 {
+        mnemonic_phrase.zeroize();
         return Err(SignerCoreError::InvalidExpectedPublicKey);
     }
 
