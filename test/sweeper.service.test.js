@@ -283,3 +283,34 @@ test('moves a submitted sweep to under_review when finalized transfer details do
   assert.equal(h.jobs.get(plan.job.id).status, 'under_review');
   assert.equal(h.ledger.length, 0);
 });
+
+
+test('rechecks the live balance and preserves the configured SOL reserve before signing', async () => {
+  const h = harness();
+  const plan = await h.service.planSolSweep({ tenantId: null, sourcePublicKey: SOURCE });
+  h.rpc.estimateSolSweep = async () => ({
+    availableLamports: '95000',
+    estimatedFeeLamports: '5000'
+  });
+
+  await assert.rejects(
+    () => h.service.executeSolSweep({ jobId: plan.job.id, tenantId: null }),
+    (error) => error.code === 'SWEEP_BALANCE_CHANGED'
+  );
+  assert.equal(h.calls.some((call) => call.action === 'broadcast'), false);
+  assert.equal(h.jobs.get(plan.job.id).status, 'planned');
+});
+
+test('rejects automatic funding requests because child-wallet top-ups are disabled in Phase 6A', async () => {
+  const h = harness();
+  await assert.rejects(
+    () => h.service.configurePolicy({
+      tenantId: null,
+      destinationPublicKey: DESTINATION,
+      enabled: true,
+      executionEnabled: false,
+      fundingEnabled: true
+    }),
+    (error) => error.code === 'SWEEP_FUNDING_UNAVAILABLE'
+  );
+});
