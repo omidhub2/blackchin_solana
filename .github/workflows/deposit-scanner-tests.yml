@@ -26,6 +26,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  nitro-signer-core:
+    name: Nitro signer core (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Test HD derivation and Ed25519 signing core
+        run: cargo test --manifest-path nitro/signer-core/Cargo.toml
+
   backend:
     name: Backend tests (Node 20 + PostgreSQL 16)
     runs-on: ubuntu-latest
