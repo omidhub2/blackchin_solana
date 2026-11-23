@@ -81,7 +81,7 @@ if (depositWorkersEnabled) {
       !workerUrl.hostname || !workerUrl.username || !workerUrl.pathname || workerUrl.pathname === '/') {
     throw new Error('DEPOSIT_WORKER_DATABASE_URL must include a PostgreSQL host, username and database name');
   }
-  const workerHost = workerUrl.hostname.replace(/^\\[|\\]$/g, '');
+  const workerHost = workerUrl.hostname.replace(/^\[|\]$/g, '');
   if (!['localhost', '127.0.0.1', '::1'].includes(workerHost) &&
       workerUrl.searchParams.get('sslmode') !== 'verify-full') {
     throw new Error('Remote DEPOSIT_WORKER_DATABASE_URL must explicitly use sslmode=verify-full');
