@@ -228,3 +228,34 @@ test('sendSolWithSigner persists the signed identity before broadcast and confir
   assert.ok(calls.indexOf('persist') < calls.indexOf('broadcast'));
   assert.ok(calls.indexOf('broadcast') < calls.indexOf('confirm'));
 });
+
+
+test('sendSolWithSigner rejects an RPC signature that differs from the locally signed transaction', async () => {
+  const sender = Keypair.generate();
+  const recipient = Keypair.generate().publicKey;
+  const rpcConnection = {
+    async getLatestBlockhash() {
+      return { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 500 };
+    },
+    async getFeeForMessage() { return 5000; },
+    async getBalance() { return 10_000_000; },
+    async sendRawTransaction() { return 'mismatched-rpc-signature'; },
+    async confirmTransaction() {
+      throw new Error('confirmation must not run for a mismatched RPC signature');
+    }
+  };
+  let persistedSignature = null;
+
+  await assert.rejects(
+    sendSolWithSigner({
+      fromPublicKey: sender.publicKey.toBase58(),
+      toPublicKey: recipient.toBase58(),
+      amountSol: '0.001',
+      getKeypair: () => sender,
+      rpcConnection,
+      onSigned: async ({ signature }) => { persistedSignature = signature; }
+    }),
+    (error) => error.signature === persistedSignature &&
+      /does not match the locally signed transaction/.test(error.message)
+  );
+});
