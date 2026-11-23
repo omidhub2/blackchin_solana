@@ -431,6 +431,22 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
           expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 15 * 60_000) {
         throw new TypeError('Approval expiry must be within the next 15 minutes');
       }
+      const configuredPolicy = await db.query(
+        `SELECT enabled, emergency_frozen
+           FROM tenant_withdrawal_policies
+          WHERE tenant_id = $1
+          LIMIT 1`,
+        [tenantId]
+      );
+      if (configuredPolicy.rowCount !== 1 ||
+          configuredPolicy.rows[0].enabled !== true ||
+          configuredPolicy.rows[0].emergency_frozen !== false) {
+        const error = new Error('Tenant withdrawal policy must be enabled and unfrozen before issuing approvals');
+        error.statusCode = 409;
+        error.code = 'WITHDRAWAL_POLICY_NOT_READY';
+        throw error;
+      }
+
       const destination = await db.query(
         `SELECT id FROM tenant_withdrawal_destinations
           WHERE tenant_id = $1 AND network = $2 AND asset = 'SOL'
