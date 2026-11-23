@@ -21,6 +21,7 @@ export const solanaRpc = Object.freeze({
   getBalance: (publicKey, commitment) => solana.getSolBalance(publicKey, commitment ?? defaultCommitment),
   getSlot: (commitment) => connection.getSlot(commitment ?? defaultCommitment),
   estimateTransfer: (input) => solana.estimateSolTransfer(input),
+  estimateSolSweep: (input) => solana.estimateSolSweep(input),
   getSignatureStatuses: (signatures) =>
     connection.getSignatureStatuses(signatures, { searchTransactionHistory: true }),
   getRecentSignatures: (address, { limit = 25, until, before } = {}) =>
