@@ -10,7 +10,7 @@ const RECIPIENT = 'Stake11111111111111111111111111111111111111';
 const REQUEST = {
   fromPublicKey: SENDER,
   toPublicKey: RECIPIENT,
-  amountSol: '0.1',
+  amountLamports: '100000000',
   network: 'devnet',
   approvalReference: 'approval-tenant-0001'
 };
