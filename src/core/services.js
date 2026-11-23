@@ -24,6 +24,7 @@ import { createDashboardAuthService } from './dashboard/dashboard-auth.service.j
 import { createDashboardService } from './dashboard/dashboard.service.js';
 import { createHotWalletService } from './hot-wallets/hot-wallet.service.js';
 import { createWebhookEndpointService } from './webhooks/webhook-endpoint.service.js';
+import { createSweeperService } from './sweeper/sweeper.service.js';
 import {
   createDepositScanner,
   SCANNER_MAX_BATCH_DEFAULT,
@@ -111,6 +112,11 @@ export function createServices(overrides = {}) {
     hdWallets: hdWalletService,
     childWallets: childWalletService,
     hotWallets: hotWalletService,
+    sweeper: createSweeperService({
+      ...deps,
+      db: deps.db,
+      log: deps.log ?? (() => {})
+    }),
     tenantWallets: createTenantWalletService({ ...deps, log: deps.log ?? (() => {}) }),
     tenantWithdrawalPolicy,
     tenantWithdrawals: createTenantWithdrawalService({
