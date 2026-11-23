@@ -61,6 +61,7 @@ const withdrawalReconciliationEnabled = process.env.WITHDRAWAL_RECONCILIATION_EN
 const withdrawalReconciliationIntervalMs = Number(process.env.WITHDRAWAL_RECONCILIATION_INTERVAL_MS || 60_000);
 const webhookDeliveryEnabled = process.env.WEBHOOK_DELIVERY_ENABLED === 'true';
 const sweeperEnabled = process.env.SWEEPER_ENABLED === 'true';
+const sweeperExecutionEnabled = process.env.SWEEPER_EXECUTION_ENABLED === 'true';
 const sweeperIntervalMs = Number(process.env.SWEEPER_INTERVAL_MS || 60_000);
 const sweeperDatabaseUrl = process.env.SWEEPER_DATABASE_URL || null;
 let sweeperPool = null;
@@ -388,6 +389,7 @@ try {
       cipher: services.deps.cipher,
       network: scannerNetwork,
       commitment: services.deps.commitment,
+      executionEnabled: sweeperExecutionEnabled,
       log: (event, meta) => console.log(JSON.stringify({
         time: new Date().toISOString(), event, ...meta
       }))
@@ -450,7 +452,7 @@ try {
 
   if (sweeperWorker) {
     await sweeperWorker.start();
-    console.log(`Sweeper worker started (network=${scannerNetwork}, interval=${sweeperIntervalMs}ms)`);
+    console.log(`Sweeper worker started (network=${scannerNetwork}, interval=${sweeperIntervalMs}ms, execution=${sweeperExecutionEnabled ? 'enabled' : 'disabled'})`);
   } else {
     console.log('Sweeper worker disabled (SWEEPER_ENABLED is not "true")');
   }
