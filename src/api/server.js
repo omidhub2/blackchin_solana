@@ -61,12 +61,12 @@ export function buildServer({ services, logger = true, health = null, metrics = 
   });
 
   app.decorate('services', services ?? null);
-  app.decorate('metrics', metrics);
   app.decorate('tenantPool', tenantPool);
   app.decorate('tenantContextSigner', tenantContextSigner);
   app.decorate('createTenantServices', createTenantServices);
   app.decorateRequest('services', null);
   app.decorateRequest('tenant', null);
+  app.decorateRequest('metricsStartedAt', null);
 
   /**
    * Resolve the injected services once per request. Production passes them to
@@ -79,7 +79,7 @@ export function buildServer({ services, logger = true, health = null, metrics = 
   });
 
   app.addHook('onResponse', async (request, reply) => {
-    if (!metrics || request.metricsStartedAt === undefined) return;
+    if (!metrics || request.metricsStartedAt === null) return;
     const elapsedNs = process.hrtime.bigint() - request.metricsStartedAt;
     metrics.recordHttpRequest({
       method: request.method,
