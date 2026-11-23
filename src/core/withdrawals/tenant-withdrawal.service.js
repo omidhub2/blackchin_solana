@@ -200,19 +200,30 @@ export function createTenantWithdrawalService({
         await hotWallets.assertCanSpend({ tenantId, publicKey: fromPublicKey, amountLamports });
       }
 
-      const authorization = await tenantWithdrawalPolicy.authorize({
-        tenantId, credentialId, approvalReference, wallet,
-        fromPublicKey, toPublicKey, amountLamports, network, idempotencyKey
-      });
-      if (authorization !== true && authorization?.allowed !== true) {
-        throw conflict('Tenant withdrawal was denied by the configured policy', 'WITHDRAWAL_NOT_AUTHORIZED');
-      }
       const requestHash = hashRequest({ fromPublicKey, toPublicKey, amountSol, network, approvalReference });
       const reservation = await reserve({
         tenantId, credentialId, approvalReference, idempotencyKey, requestHash,
         walletPublicKey: fromPublicKey, toPublicKey, amountLamports
       });
       if (!reservation.reserved) return { ...reservation.replay, replayed: true };
+
+      // Reserve idempotency before consuming the one-time approval. A completed
+      // retry can then replay its original response without reusing an approval.
+      let authorization;
+      try {
+        authorization = await tenantWithdrawalPolicy.authorize({
+          tenantId, credentialId, approvalReference, wallet,
+          fromPublicKey, toPublicKey, amountLamports, network, idempotencyKey,
+          requestHash
+        });
+      } catch (error) {
+        await failReservation(tenantId, idempotencyKey).catch(() => {});
+        throw error;
+      }
+      if (authorization !== true && authorization?.allowed !== true) {
+        await failReservation(tenantId, idempotencyKey);
+        throw conflict('Tenant withdrawal was denied by the configured policy', 'WITHDRAWAL_NOT_AUTHORIZED');
+      }
 
       await emitEventSafe(db, {
         eventType: 'withdrawal.accepted',
