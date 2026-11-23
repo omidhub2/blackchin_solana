@@ -39,6 +39,12 @@ function makeDb(ownerTenantId) {
       if (sql.includes('FROM wallets') && sql.includes('WHERE tenant_id = $1 AND public_key = $2')) {
         return { rows: [], rowCount: 0 };
       }
+      if (sql.includes('INSERT INTO webhook_outbox')) {
+        return { rows: [{ id: '501', event_id: params[0], event_type: params[1] }], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO operational_events')) {
+        return { rows: [{ id: '601', event_id: params[0], event_type: params[2] }], rowCount: 1 };
+      }
       if (sql.includes('INSERT INTO blockchain_transactions')) {
         inserts.push({ sql, params });
         const row = {
