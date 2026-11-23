@@ -44,9 +44,12 @@ GRANT SELECT, INSERT
     TO blackchin_deposit_worker_runtime;
 
 -- Deposit detection emits transactional webhook outbox and dashboard events.
--- The worker may insert/read its own RETURNING projection, but cannot deliver,
--- mutate, replay, or delete queued events.
-GRANT SELECT, INSERT
+-- The worker may insert/read only the id + event_id RETURNING projection.
+-- It cannot read event payloads, deliver, mutate, replay, or delete queued events.
+GRANT INSERT
+    ON public.webhook_outbox, public.operational_events
+    TO blackchin_deposit_worker_runtime;
+GRANT SELECT (id, event_id)
     ON public.webhook_outbox, public.operational_events
     TO blackchin_deposit_worker_runtime;
 
