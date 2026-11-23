@@ -53,12 +53,14 @@ export async function insertSweepJob(db, input) {
 }
 
 export async function findSweepJob(db, id, tenantId = undefined) {
-  const result = await db.query(
-    `SELECT * FROM sweep_jobs
-      WHERE id = $1 AND ($2::bigint IS NULL OR tenant_id IS NOT DISTINCT FROM $2)
-      LIMIT 1`,
-    [id, tenantId === undefined ? null : tenantId === null ? null : String(tenantId)]
-  );
+  const result = tenantId === undefined
+    ? await db.query('SELECT * FROM sweep_jobs WHERE id = $1 LIMIT 1', [id])
+    : await db.query(
+      `SELECT * FROM sweep_jobs
+        WHERE id = $1 AND tenant_id IS NOT DISTINCT FROM $2
+        LIMIT 1`,
+      [id, tenantId === null ? null : String(tenantId)]
+    );
   return result.rows[0] ?? null;
 }
 
@@ -88,12 +90,17 @@ export async function updateSweepJob(db, id, { status, signature = undefined, er
 }
 
 export async function listSweepJobs(db, { tenantId = undefined, limit = 50, offset = 0 } = {}) {
-  const result = await db.query(
-    `SELECT * FROM sweep_jobs
-      WHERE ($1::bigint IS NULL OR tenant_id IS NOT DISTINCT FROM $1)
-      ORDER BY created_at DESC, id DESC
-      LIMIT $2 OFFSET $3`,
-    [tenantId === undefined ? null : tenantId === null ? null : String(tenantId), limit, offset]
-  );
+  const result = tenantId === undefined
+    ? await db.query(
+      `SELECT * FROM sweep_jobs
+        ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    )
+    : await db.query(
+      `SELECT * FROM sweep_jobs
+        WHERE tenant_id IS NOT DISTINCT FROM $1
+        ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`,
+      [tenantId === null ? null : String(tenantId), limit, offset]
+    );
   return result.rows;
 }
