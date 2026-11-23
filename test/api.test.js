@@ -6,6 +6,7 @@ import { Keypair } from '@solana/web3.js';
 
 import { buildServer } from '../src/api/server.js';
 import { AppError } from '../src/core/errors.js';
+import { createMetricsService } from '../src/core/metrics.service.js';
 
 const API_KEY = process.env.API_ACCESS_KEY;
 const DESTINATION = Keypair.generate().publicKey.toBase58();
@@ -177,6 +178,24 @@ function makeApp() {
 }
 
 const HI = { 'x-api-key': API_KEY };
+
+test('Prometheus metrics are API-key protected and use route templates', async () => {
+  const fake = createFakeServices();
+  const metrics = createMetricsService();
+  const app = buildServer({ logger: false, services: fake.services, metrics });
+  try {
+    await app.inject({ url: '/health' });
+    assert.equal((await app.inject({ url: '/metrics' })).statusCode, 401);
+    const response = await app.inject({ url: '/metrics', headers: HI });
+    assert.equal(response.statusCode, 200);
+    assert.match(response.headers['content-type'], /text\/plain/);
+    assert.match(response.body, /blackchin_http_requests_total/);
+    assert.match(response.body, /route="\\/health"/);
+    assert.equal(response.body.includes('route="\\/metrics"'), false);
+  } finally {
+    await app.close();
+  }
+});
 
 test('health is public; every other route requires the API key', async () => {
   const { app } = makeApp();
