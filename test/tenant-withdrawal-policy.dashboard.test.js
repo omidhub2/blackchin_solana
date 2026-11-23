@@ -22,6 +22,14 @@ function harness(role = 'admin') {
       policyCalls.push(['configurePolicy', input]);
       return { tenantId: input.tenantId, enabled: input.enabled, emergencyFrozen: true, policyVersion: '2' };
     },
+    async updatePolicy(input) {
+      policyCalls.push(['updatePolicy', input]);
+      return { tenantId: input.tenantId, enabled: input.enabled, emergencyFrozen: true, policyVersion: '3' };
+    },
+    async deletePolicy(input) {
+      policyCalls.push(['deletePolicy', input]);
+      return { tenantId: String(input.tenantId), deleted: true };
+    },
     async freeze(input) {
       policyCalls.push(['freeze', input]);
       return { tenantId: input.tenantId, emergencyFrozen: true, freezeReason: input.reason, policyVersion: '3' };
@@ -162,6 +170,66 @@ test('admin withdrawal approval endpoint hashes the exact lamport amount', async
     assert.equal(issued[1].tenantId, 42);
     assert.equal(issued[1].credentialId, 7);
     assert.match(issued[1].requestHash, /^[a-f0-9]{64}$/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('admin can edit an existing tenant withdrawal policy through PATCH', async () => {
+  const h = harness('admin');
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/dashboard/tenants/42/withdrawal-policy',
+      headers: headers(),
+      payload: {
+        enabled: true,
+        maxSingleLamports: '100000000',
+        maxDailyLamports: '500000000',
+        maxWeeklyLamports: '2000000000',
+        maxDailyCount: 5,
+        maxWeeklyCount: 20
+      }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(h.policyCalls[0][0], 'updatePolicy');
+    assert.equal(h.policyCalls[0][1].tenantId, 42);
+  } finally {
+    await app.close();
+  }
+});
+
+test('only dashboard admins can delete a tenant withdrawal policy', async () => {
+  const h = harness('operator');
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/dashboard/tenants/42/withdrawal-policy',
+      headers: headers()
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(h.policyCalls.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test('admin policy deletion passes the authenticated actor to the service', async () => {
+  const h = harness('admin');
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/dashboard/tenants/42/withdrawal-policy',
+      headers: headers()
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(h.policyCalls[0], ['deletePolicy', {
+      tenantId: 42,
+      deletedBy: 'admin@example.com'
+    }]);
   } finally {
     await app.close();
   }
