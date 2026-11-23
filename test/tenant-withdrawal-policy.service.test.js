@@ -277,7 +277,7 @@ test('approval issuance is bound to an active destination, active tenant wallet 
   assert.equal(approval.tenantId, '42');
   assert.equal(approval.status, 'approved');
   assert.equal(calls.length, 5);
-  assert.match(calls[3].query, /c\.scopes @> ARRAY\['withdrawals:submit'\]::text\[\]/);
+  assert.match(calls[4].query, /c\.scopes @> ARRAY\['withdrawals:submit'\]::text\[\]/);
 });
 
 
