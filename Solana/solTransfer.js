@@ -16,6 +16,14 @@ const MAX_SAFE_LAMPORTS = BigInt(Number.MAX_SAFE_INTEGER);
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const VALID_COMMITMENTS = new Set(['processed', 'confirmed', 'finalized']);
 
+function zeroizeKeypairMaterial(keypair) {
+  if (!keypair || typeof keypair !== 'object') return;
+  const internal = keypair._keypair;
+  for (const candidate of [keypair.secretKey, internal?.privateKey, internal?.secretKey]) {
+    try { candidate?.fill?.(0); } catch { /* best-effort zeroization */ }
+  }
+}
+
 function encodeBase58(bytes) {
   let value = 0n;
   for (const byte of bytes) value = (value << 8n) | BigInt(byte);
@@ -602,9 +610,7 @@ export async function sendSol({
       secretBytes.fill(0);
     }
 
-    if (senderKeypair?.secretKey) {
-      senderKeypair.secretKey.fill(0);
-    }
+    zeroizeKeypairMaterial(senderKeypair);
 
     if (storedWallet) {
       storedWallet.privateKey = '';
