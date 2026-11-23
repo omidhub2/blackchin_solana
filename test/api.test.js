@@ -190,8 +190,8 @@ test('Prometheus metrics are API-key protected and use route templates', async (
     assert.equal(response.statusCode, 200);
     assert.match(response.headers['content-type'], /text\/plain/);
     assert.match(response.body, /blackchin_http_requests_total/);
-    assert.match(response.body, /route="\\/health"/);
-    assert.equal(response.body.includes('route="\\/metrics"'), false);
+    assert.equal(response.body.includes('route="/health"'), true);
+    assert.equal(response.body.includes('route="/metrics"'), false);
   } finally {
     await app.close();
   }
