@@ -10,39 +10,37 @@ function zeroize(keypair) {
   }
 }
 
-async function requestDevnetAirdrop(publicKey, lamports) {
-  let lastError;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await connection.requestAirdrop(publicKey, lamports);
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
-    }
-  }
-  throw lastError;
-}
-
 if (solanaNetwork !== 'devnet') {
   throw new Error(`Refusing Devnet smoke test on network ${solanaNetwork}`);
 }
 
 await assertSolanaNetworkIdentity();
 
-const sender = Keypair.generate();
+const encodedSecret = process.env.DEVNET_SMOKE_SECRET_KEY;
+if (typeof encodedSecret !== 'string' || encodedSecret.length === 0) {
+  throw new Error(
+    'DEVNET_SMOKE_SECRET_KEY is required. Fund a dedicated Devnet-only wallet using the official faucet, then store its base64 secret key as a GitHub Actions secret. Never use a Mainnet wallet.'
+  );
+}
+
+const secretBytes = Buffer.from(encodedSecret, 'base64');
+if (secretBytes.length !== 64) {
+  secretBytes.fill(0);
+  throw new Error('DEVNET_SMOKE_SECRET_KEY must decode to a 64-byte Solana secret key');
+}
+
+let sender;
+try {
+  sender = Keypair.fromSecretKey(secretBytes);
+} finally {
+  secretBytes.fill(0);
+}
 const recipient = Keypair.generate();
 
 try {
-  const airdropSignature = await requestDevnetAirdrop(sender.publicKey, 1_000_000_000);
-  const airdropConfirmation = await connection.confirmTransaction(airdropSignature, 'confirmed');
-
-  if (airdropConfirmation.value.err) {
-    throw new Error(`Devnet airdrop failed: ${JSON.stringify(airdropConfirmation.value.err)}`);
-  }
-
   const senderBalanceBefore = await connection.getBalance(sender.publicKey, 'confirmed');
-  if (senderBalanceBefore < 1_000_000_000) {
-    throw new Error('Devnet airdrop did not fund the ephemeral sender with 1 SOL');
+  if (senderBalanceBefore < 1_000_000) {
+    throw new Error('The dedicated Devnet smoke wallet is not funded; request Devnet SOL from the official faucet.');
   }
 
   let persistedSignature = null;
@@ -80,8 +78,7 @@ try {
   process.stdout.write(JSON.stringify({
     result: 'PASS',
     network: solanaNetwork,
-    genesisHash: (await connection.getGenesisHash()),
-    airdropSignature,
+    genesisHash: await connection.getGenesisHash(),
     transferSignature: transfer.signature,
     sender: sender.publicKey.toBase58(),
     recipient: recipient.publicKey.toBase58(),
