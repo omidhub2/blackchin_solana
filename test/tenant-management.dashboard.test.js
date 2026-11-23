@@ -82,6 +82,23 @@ test('tenant creation is admin-only, CSRF protected and starts pending', async (
   }
 });
 
+test('tenant creation requires a valid CSRF token', async () => {
+  const h = harness('admin');
+  const app = buildServer({ logger: false, services: h.services });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dashboard/tenants',
+      headers: { cookie: 'bc_dashboard_session=valid-session' },
+      payload: { tenantCode: 'acme-prod', displayName: 'Acme Production' }
+    });
+    assert.equal(response.statusCode, 403);
+    assert.equal(h.queries.some(({ query }) => query.startsWith('INSERT INTO tenants')), false);
+  } finally {
+    await app.close();
+  }
+});
+
 test('tenant creation rejects non-admin dashboard roles', async () => {
   const h = harness('operator');
   const app = buildServer({ logger: false, services: h.services });
