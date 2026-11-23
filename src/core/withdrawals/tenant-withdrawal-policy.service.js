@@ -359,6 +359,38 @@ export function createTenantWithdrawalPolicyService({ db, log = () => {} } = {})
           expiresAt.getTime() <= Date.now() || expiresAt.getTime() > Date.now() + 15 * 60_000) {
         throw new TypeError('Approval expiry must be within the next 15 minutes');
       }
+      const destination = await db.query(
+        `SELECT id FROM tenant_withdrawal_destinations
+          WHERE tenant_id = $1 AND network = $2 AND asset = 'SOL'
+            AND destination_public_key = $3 AND status = 'active'
+          LIMIT 1`,
+        [tenantId, input.network, input.destinationPublicKey]
+      );
+      if (destination.rowCount !== 1) {
+        const error = new Error('Withdrawal destination must be approved and active before an approval can be issued');
+        error.statusCode = 409;
+        error.code = 'WITHDRAWAL_DESTINATION_NOT_ACTIVE';
+        throw error;
+      }
+
+      const wallet = await db.query(
+        `SELECT a.id
+           FROM wallet_accounts a
+           INNER JOIN hd_wallets h
+             ON h.tenant_id = a.tenant_id AND h.id = a.hd_wallet_id
+          WHERE a.tenant_id = $1 AND a.public_key = $2
+            AND a.network = $3 AND a.status = 'active'
+            AND h.network = $3 AND h.status = 'active'
+          LIMIT 1`,
+        [tenantId, input.walletPublicKey, input.network]
+      );
+      if (wallet.rowCount !== 1) {
+        const error = new Error('Active HD child wallet was not found for this tenant and network');
+        error.statusCode = 404;
+        error.code = 'WITHDRAWAL_WALLET_NOT_FOUND';
+        throw error;
+      }
+
       const result = await db.query(
         `INSERT INTO tenant_withdrawal_approvals (
            tenant_id, credential_id, approval_reference, request_hash,
