@@ -38,6 +38,66 @@ jobs:
       - name: Test HD derivation and Ed25519 signing core
         run: cargo test --manifest-path nitro/signer-core/Cargo.toml
 
+  vault-transit-integration:
+    name: Vault Transit live integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Start disposable Vault dev server
+        run: |
+          docker run -d --name blackchin-vault-ci \
+            -p 127.0.0.1:8200:8200 \
+            hashicorp/vault:1.20 \
+            server -dev -dev-listen-address=0.0.0.0:8200 \
+            -dev-root-token-id=blackchin-ci-root-token
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:8200/v1/sys/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --silent --fail http://127.0.0.1:8200/v1/sys/health >/dev/null
+
+      - name: Configure Transit and signer-only policy
+        run: |
+          docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN=blackchin-ci-root-token \
+            blackchin-vault-ci vault secrets enable transit
+          docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN=blackchin-ci-root-token \
+            blackchin-vault-ci vault write -f transit/keys/blackchin-envelope \
+            type=aes256-gcm96 exportable=false allow_plaintext_backup=false
+          cat infra/local/vault/policies/blackchin-signer.hcl | \
+            docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN=blackchin-ci-root-token \
+            blackchin-vault-ci vault policy write blackchin-signer -
+          SIGNER_TOKEN=$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 \
+            -e VAULT_TOKEN=blackchin-ci-root-token \
+            blackchin-vault-ci vault token create -policy=blackchin-signer \
+            -ttl=5m -field=token)
+          echo "VAULT_ADDR=http://127.0.0.1:8200" >> "$GITHUB_ENV"
+          echo "VAULT_TRANSIT_KEY_NAME=blackchin-envelope" >> "$GITHUB_ENV"
+          echo "VAULT_SIGNER_TOKEN=$SIGNER_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Test live Vault Transit envelope encryption
+        run: npm run test:security:vault-live
+
+      - name: Stop disposable Vault
+        if: always()
+        run: docker rm -f blackchin-vault-ci || true
+
   backend:
     name: Backend tests (Node 20 + PostgreSQL 16)
     runs-on: ubuntu-latest
