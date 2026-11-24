@@ -30,7 +30,8 @@
     "test:security:providers": "node --test test/envelope-crypto.test.js test/vault-transit-key-provider.test.js",
     "vault:local:up": "docker compose -f infra/local/vault/docker-compose.yml up -d",
     "vault:local:down": "docker compose -f infra/local/vault/docker-compose.yml down",
-    "vault:local:bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File infra/local/vault/bootstrap.ps1"
+    "vault:local:bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File infra/local/vault/bootstrap.ps1",
+    "test:security:vault-live": "node --test test/vault-transit-live.test.js"
   },
   "dependencies": {
     "@scure/bip39": "^2.4.0",
