@@ -56,6 +56,12 @@ export function createEnvelopeCrypto(keyProvider) {
         const cipher = crypto.createCipheriv(ALGORITHM, dek, iv, { authTagLength: TAG_BYTES });
         cipher.setAAD(authenticatedData);
         const ciphertext = Buffer.concat([cipher.update(input), cipher.final()]);
+        let ciphertextHex;
+        try {
+          ciphertextHex = ciphertext.toString('hex');
+        } finally {
+          ciphertext.fill(0);
+        }
         const wrapped = await keyProvider.wrapKey(dek);
         if (!wrapped || typeof wrapped.wrappedKey !== 'string' ||
             !Number.isSafeInteger(wrapped.keyVersion) || wrapped.keyVersion < 1) {
@@ -64,7 +70,7 @@ export function createEnvelopeCrypto(keyProvider) {
         return Object.freeze({
           version: VERSION,
           algorithm: ALGORITHM,
-          ciphertext: ciphertext.toString('hex'),
+          ciphertext: ciphertextHex,
           iv: iv.toString('hex'),
           authTag: cipher.getAuthTag().toString('hex'),
           wrappedKey: wrapped.wrappedKey,
