@@ -23,3 +23,10 @@ Thumbs.db
 !.vscode/extensions.json
 
 package.local-backup.json
+
+# Local Vault and signer runtime material
+infra/local/vault/.env
+infra/local/vault/*.env
+infra/local/vault/data/
+infra/local/vault/logs/
+nitro/signer-core/target/
