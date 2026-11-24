@@ -26,7 +26,10 @@
     "test:migrations": "node --test test/migrations.test.js",
     "test:withdrawal-reconciliation": "node --test test/withdrawal-reconciliation.service.test.js",
     "test:dashboard": "node --test test/dashboard-auth.test.js test/hot-wallet.service.test.js test/operational-event.repository.test.js",
-    "load:test": "node scripts/http-load.mjs"
+    "load:test": "node scripts/http-load.mjs",
+    "test:security:providers": "node --test test/envelope-crypto.test.js test/vault-transit-key-provider.test.js",
+    "vault:local:up": "docker compose -f infra/local/vault/docker-compose.yml up -d",
+    "vault:local:down": "docker compose -f infra/local/vault/docker-compose.yml down"
   },
   "dependencies": {
     "@scure/bip39": "^2.4.0",
