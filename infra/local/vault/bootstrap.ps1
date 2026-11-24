@@ -27,7 +27,8 @@ if ($keys -notcontains "blackchin-envelope") {
 }
 
 Write-Host "Installing signer-only policy..."
-Invoke-VaultCli @("policy", "write", "blackchin-signer", "/dev/stdin") < infra/local/vault/policies/blackchin-signer.hcl | Out-Null
+Get-Content -Raw "infra/local/vault/policies/blackchin-signer.hcl" | docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 -e "VAULT_TOKEN=$rootToken" $container vault policy write blackchin-signer -
+if ($LASTEXITCODE -ne 0) { throw "Could not install the signer-only Vault policy." }
 
 Write-Host "Creating a short-lived local signer token..."
 $tokenOutput = Invoke-VaultCli @("token", "create", "-policy=blackchin-signer", "-ttl=1h", "-renewable=true", "-field=token")
